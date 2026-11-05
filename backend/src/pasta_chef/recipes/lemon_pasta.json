@@ -1,0 +1,80 @@
+{
+  "id": "lemon_pasta",
+  "name": "Lemon Pasta",
+  "ingredients": [
+    "spaghetti",
+    "water",
+    "salt",
+    "lemon",
+    "butter",
+    "garlic",
+    "mint",
+    "cheese"
+  ],
+  "tasks": [
+    {
+      "id": "collect_ingredients",
+      "description": "Collect the recipe ingredients.",
+      "duration": 20,
+      "requires": [],
+      "resources": ["chef"]
+    },
+    {
+      "id": "boil_water",
+      "description": "Heat salted water in the pot.",
+      "duration": 120,
+      "requires": ["collect_ingredients"],
+      "resources": ["pot", "burner"]
+    },
+    {
+      "id": "prepare_mint",
+      "description": "Prepare the mint.",
+      "duration": 20,
+      "requires": ["collect_ingredients"],
+      "resources": ["chef"]
+    },
+    {
+      "id": "crush_garlic",
+      "description": "Crush the garlic.",
+      "duration": 20,
+      "requires": ["collect_ingredients"],
+      "resources": ["chef"]
+    },
+    {
+      "id": "cook_pasta_halfway",
+      "description": "Add pasta and cook for half its total cooking time.",
+      "duration": 240,
+      "requires": ["boil_water"],
+      "resources": ["pot", "burner"]
+    },
+    {
+      "id": "reserve_water_and_drain",
+      "description": "Reserve pasta water, drain pasta, and remove the pot from the burner.",
+      "duration": 20,
+      "requires": ["cook_pasta_halfway"],
+      "resources": ["chef", "pot"]
+    },
+    {
+      "id": "prepare_sauce",
+      "description": "Heat butter and garlic in the pan, then add reserved pasta water.",
+      "duration": 40,
+      "requires": ["reserve_water_and_drain", "crush_garlic"],
+      "resources": ["chef", "pan", "burner"]
+    },
+    {
+      "id": "finish_pasta",
+      "description": "Add pasta to the pan and finish cooking, stirring and adding pasta water.",
+      "duration": 240,
+      "requires": ["prepare_sauce"],
+      "resources": ["chef", "pan", "burner"]
+    },
+    {
+      "id": "finish_off_heat",
+      "description": "Off heat, mix in zest, butter, cheese, mint, and lemon juice.",
+      "duration": 30,
+      "requires": ["finish_pasta", "prepare_mint"],
+      "resources": ["chef", "pan"]
+    }
+  ],
+  "completion_tasks": ["finish_off_heat"]
+}

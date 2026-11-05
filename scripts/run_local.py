@@ -1,0 +1,51 @@
+"""Terminal entry point. Default mode is credential-free scripted cooking."""
+import argparse
+import json
+
+from pasta_chef.simulation.kitchen import Kitchen
+
+
+def run_scripted(kitchen: Kitchen, order_id: str) -> dict:
+    """Explicit baseline: preparation overlaps background water heating."""
+    def cook(task_id):
+        kitchen.start_task(order_id, task_id)
+        kitchen.advance_to_next_event()
+
+    cook("collect_ingredients")
+    kitchen.start_task(order_id, "boil_water")
+    cook("prepare_mint")
+    cook("crush_garlic")
+    kitchen.advance_to_next_event()
+    for task_id in ("cook_pasta_halfway", "reserve_water_and_drain", "prepare_sauce",
+                    "finish_pasta", "finish_off_heat"):
+        cook(task_id)
+    return kitchen.serve_order(order_id)
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--mode", choices=("scripted", "agent"), default="scripted")
+    parser.add_argument("--menu", default="lemon_pasta")
+    parser.add_argument("--time-limit", type=int, default=900)
+    args = parser.parse_args()
+    kitchen = Kitchen()
+    try:
+        order = kitchen.add_order(args.menu, args.time_limit)
+        if args.mode == "scripted":
+            result = run_scripted(kitchen, order.id)
+        else:
+            import asyncio
+            from pasta_chef.config import Settings
+            from pasta_chef.runtime.controller import run_agent_episode
+            result = asyncio.run(run_agent_episode(kitchen, Settings.from_env()))
+        for event in kitchen.state.events:
+            print(json.dumps(event))
+        print(json.dumps(result, indent=2))
+        return 0 if result["ok"] else 1
+    except (ValueError, KeyError, ImportError, RuntimeError) as error:
+        print(json.dumps({"ok": False, "error": str(error)}))
+        return 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
