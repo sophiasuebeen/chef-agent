@@ -30,6 +30,9 @@ class Settings:
         # Shell environment wins, then root .env, then backend/.env.
         load_dotenv(root / ".env", override=False)
         load_dotenv(root / "backend" / ".env", override=False)
+        # This terminal demo uses the Gemini Developer API, even if the shell
+        # was previously configured for Vertex AI. Do this before ADK starts.
+        os.environ["GOOGLE_GENAI_USE_VERTEXAI"] = "false"
         return cls(
             model=os.getenv("CHEF_MODEL", "gemini-2.5-flash"),
             max_model_calls=int(os.getenv("CHEF_MAX_MODEL_CALLS", "40")),
@@ -37,3 +40,28 @@ class Settings:
             max_simulated_time=int(os.getenv("CHEF_MAX_SIMULATED_TIME", "1200")),
             timeout_seconds=float(os.getenv("CHEF_TIMEOUT_SECONDS", "120")),
         )
+
+
+class ConfigurationError(RuntimeError):
+    pass
+
+
+def require_google_credentials() -> None:
+    """Fail before creating a provider client; never print credential values."""
+    os.environ["GOOGLE_GENAI_USE_VERTEXAI"] = "false"
+    if not (os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY")):
+        raise ConfigurationError(
+            "Google credentials unavailable: set GOOGLE_API_KEY or GEMINI_API_KEY in the "
+            "shell or project .env for the Gemini API."
+        )
+
+
+def require_model_credentials(model: str) -> None:
+    """Select credentials for the configured model without displaying secrets."""
+    if model.startswith(("openai/", "gpt-")):
+        if not os.getenv("OPENAI_API_KEY"):
+            raise ConfigurationError(
+                "OpenAI credentials unavailable: set OPENAI_API_KEY in the shell or project .env."
+            )
+    else:
+        require_google_credentials()
