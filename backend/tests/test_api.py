@@ -3,6 +3,7 @@
 PYTHONPATH=backend/src backend/.venv/bin/python -m unittest discover -s backend/tests -v
 """
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import asdict
 from json import JSONDecodeError
 from threading import Thread
 import unittest
@@ -15,6 +16,19 @@ from pasta_chef.main import create_app
 from pasta_chef.simulation.observation import build_observation
 
 LEMON = {"menu": "lemon_pasta", "time_limit": 900}
+
+
+def cook_and_serve(kitchen, order_id: str) -> None:
+    """Drive the simulator directly: the API has no cooking endpoints."""
+    while True:
+        available = build_observation(kitchen.state)["available_tasks"][order_id]
+        if available:
+            kitchen.start_task(order_id, available[0])
+        elif kitchen.state.running_tasks:
+            kitchen.advance_to_next_event()
+        else:
+            break
+    kitchen.serve_order(order_id)
 
 
 class ApiTestCase(unittest.TestCase):
@@ -96,6 +110,104 @@ class OrderAndStateTests(ApiTestCase):
         self.assertTrue(state["chef_available"])
         self.assertEqual(state["completed_tasks"], {"order_1": []})
         self.assertEqual(state["available_tasks"], {"order_1": ["collect_ingredients"]})
+
+
+class OrderRetrievalTests(ApiTestCase):
+    def get(self, run_id: str, order_id: str = "order_1"):
+        return self.client.get(f"/runs/{run_id}/orders/{order_id}")
+
+    def kitchen(self, run_id: str):
+        return self.app.state.runs.get(run_id).kitchen
+
+    def test_pending_order_matches_the_created_order(self):
+        run_id = self.new_run()
+        created = self.order(run_id).json()
+        response = self.get(run_id)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json(), created)
+        self.assertEqual(response.json()["status"], "pending")
+        self.assertIsNone(response.json()["served_at"])
+        self.assertIsNone(response.json()["on_time"])
+
+    def test_cooking_order_shows_progress(self):
+        run_id = self.new_run()
+        self.order(run_id)
+        self.kitchen(run_id).start_task("order_1", "collect_ingredients")
+        self.kitchen(run_id).advance_to_next_event()
+        order = self.get(run_id).json()
+        self.assertEqual(order["status"], "cooking")
+        self.assertEqual(order["completed_tasks"], ["collect_ingredients"])
+
+    def test_served_order_stays_retrievable_after_leaving_state_orders(self):
+        run_id = self.new_run()
+        self.order(run_id)
+        cook_and_serve(self.kitchen(run_id), "order_1")
+        served_at = self.kitchen(run_id).state.time
+
+        response = self.get(run_id)
+        self.assertEqual(response.status_code, 200)
+        order = response.json()
+        self.assertEqual(order["id"], "order_1")
+        self.assertEqual(order["menu"], "lemon_pasta")
+        self.assertEqual(order["status"], "served")
+        self.assertEqual((order["created_at"], order["deadline"]), (0, 900))
+        self.assertEqual(order["served_at"], served_at)
+        self.assertGreater(served_at, 0)
+        self.assertIs(order["on_time"], True)
+
+        state = self.state(run_id)
+        self.assertEqual(state["orders"], [])  # The observation format is unchanged.
+        self.assertEqual(state, build_observation(self.kitchen(run_id).state))
+
+    def test_late_served_order_reports_not_on_time(self):
+        run_id = self.new_run()
+        self.order(run_id, {"menu": "lemon_pasta", "time_limit": 1})
+        cook_and_serve(self.kitchen(run_id), "order_1")
+        order = self.get(run_id).json()
+        self.assertEqual(order["status"], "served")
+        self.assertIs(order["on_time"], False)
+        self.assertGreater(order["served_at"], order["deadline"])
+
+    def test_retrieving_an_order_changes_nothing(self):
+        run_id = self.new_run()
+        self.order(run_id)
+        before = self.state(run_id)
+        self.get(run_id)
+        self.get(run_id, "order_404")
+        self.assertEqual(self.state(run_id), before)
+
+    def test_unknown_run_or_order_returns_404(self):
+        run_id = self.new_run()
+        self.order(run_id)
+        cases = {
+            "unknown order": (run_id, "order_2", "Unknown order: order_2"),
+            "unknown run": ("missing", "order_1", "Unknown run: missing"),
+            "both unknown": ("missing", "order_2", "Unknown run: missing"),
+        }
+        for name, (run, order_id, detail) in cases.items():
+            with self.subTest(name):
+                response = self.get(run, order_id)
+                self.assertEqual(response.status_code, 404)
+                self.assertEqual(response.json(), {"detail": detail})
+
+    def test_invalid_utf8_order_id_returns_404(self):
+        self.assertEqual(self.get(self.new_run(), "%ED%A0%80").status_code, 404)
+
+    def test_same_order_id_in_another_run_is_a_separate_order(self):
+        served, pending, empty = self.new_run(), self.new_run(), self.new_run()
+        self.order(served)
+        self.order(served)
+        self.order(pending, {"menu": "lemon_pasta", "time_limit": 7})
+        cook_and_serve(self.kitchen(served), "order_1")
+
+        self.assertEqual(self.get(served).json()["status"], "served")
+        other = self.get(pending).json()
+        self.assertEqual(other["status"], "pending")
+        self.assertEqual(other["deadline"], 7)
+        self.assertIsNone(other["served_at"])
+        self.assertEqual(self.get(served, "order_2").status_code, 200)
+        self.assertEqual(self.get(pending, "order_2").status_code, 404)
+        self.assertEqual(self.get(empty).status_code, 404)
 
 
 class InvalidInputTests(ApiTestCase):
@@ -216,6 +328,42 @@ class ConcurrencyTests(ApiTestCase):
         self.assertEqual(seen, {"target": True, "other": False})
         self.assertFalse(runs.get(target).lock.locked())
 
+    def test_get_order_runs_while_holding_only_its_own_run_lock(self):
+        target, other = self.new_run(), self.new_run()
+        self.order(target)
+        runs = self.app.state.runs
+        real_get_order = runs.get(target).kitchen.get_order
+        seen = {}
+
+        def get_order(order_id):
+            seen.update(target=runs.get(target).lock.locked(), other=runs.get(other).lock.locked())
+            return real_get_order(order_id)
+
+        with patch.object(runs.get(target).kitchen, "get_order", get_order):
+            response = self.client.get(f"/runs/{target}/orders/order_1")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(seen, {"target": True, "other": False})
+        self.assertFalse(runs.get(target).lock.locked())
+
+    def test_an_unknown_order_releases_the_run_lock(self):
+        run_id = self.new_run()
+        self.assertEqual(self.client.get(f"/runs/{run_id}/orders/order_1").status_code, 404)
+        self.assertFalse(self.app.state.runs.get(run_id).lock.locked())
+
+    def test_retrieved_order_is_copied_while_holding_the_run_lock(self):
+        run_id = self.new_run()
+        self.order(run_id)
+        lock = self.app.state.runs.get(run_id).lock
+        seen = []
+
+        def copy_order(order):
+            seen.append(lock.locked())
+            return asdict(order)
+
+        with patch("pasta_chef.api.routes.orders.asdict", copy_order):
+            self.client.get(f"/runs/{run_id}/orders/order_1")
+        self.assertEqual(seen, [True])
+
     def test_state_is_built_while_holding_the_run_lock(self):
         run_id = self.new_run()
         lock = self.app.state.runs.get(run_id).lock
@@ -259,6 +407,7 @@ class OpenApiTests(ApiTestCase):
     def test_declared_errors_match_the_error_format(self):
         paths = self.app.openapi()["paths"]
         routes = {("/runs/{run_id}/orders", "post"): {"400", "404", "422"},
+                  ("/runs/{run_id}/orders/{order_id}", "get"): {"404", "422"},
                   ("/runs/{run_id}/state", "get"): {"404", "422"}}
         for (path, method), codes in routes.items():
             responses = paths[path][method]["responses"]
@@ -266,6 +415,11 @@ class OpenApiTests(ApiTestCase):
                 with self.subTest(path=path, code=code):
                     schema = responses[code]["content"]["application/json"]["schema"]
                     self.assertEqual(schema, {"$ref": "#/components/schemas/ErrorResponse"})
+
+    def test_order_endpoint_publishes_the_order_format(self):
+        responses = self.app.openapi()["paths"]["/runs/{run_id}/orders/{order_id}"]["get"]["responses"]
+        self.assertEqual(responses["200"]["content"]["application/json"]["schema"],
+                         {"$ref": "#/components/schemas/OrderResponse"})
 
     def test_time_limit_bounds_are_published(self):
         field = self.app.openapi()["components"]["schemas"]["OrderCreate"]["properties"]["time_limit"]

@@ -22,3 +22,14 @@ def create_order(body: OrderCreate, run: Annotated[Run, Depends(get_run)]) -> di
             raise  # An unreadable recipe file is a server fault, despite subclassing ValueError.
         except ValueError as error:
             raise HTTPException(status_code=422, detail=safe_text(str(error))) from error
+
+
+@router.get("/runs/{run_id}/orders/{order_id}", response_model=OrderResponse,
+            responses=error_responses(404, 422))
+def get_order(order_id: str, run: Annotated[Run, Depends(get_run)]) -> dict:
+    """Return one order from this run, including after it has been served."""
+    with run.lock:
+        try:
+            return asdict(run.kitchen.get_order(order_id))
+        except KeyError:
+            raise HTTPException(status_code=404, detail=f"Unknown order: {order_id}") from None
