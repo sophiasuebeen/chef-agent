@@ -27,6 +27,7 @@ def main() -> int:
     parser.add_argument("--mode", choices=("scripted", "agent"), default="scripted")
     parser.add_argument("--menu", default="lemon_pasta")
     parser.add_argument("--time-limit", type=int, default=900)
+    parser.add_argument("--model", help="Override CHEF_MODEL, e.g. openai/gpt-4o")
     args = parser.parse_args()
     kitchen = Kitchen()
     try:
@@ -36,8 +37,12 @@ def main() -> int:
         else:
             import asyncio
             from pasta_chef.config import Settings
+            settings = Settings.from_env()
+            if args.model:
+                from dataclasses import replace
+                settings = replace(settings, model=args.model)
             from pasta_chef.runtime.controller import run_agent_episode
-            result = asyncio.run(run_agent_episode(kitchen, Settings.from_env()))
+            result = asyncio.run(run_agent_episode(kitchen, settings))
         for event in kitchen.state.events:
             print(json.dumps(event))
         print(json.dumps(result, indent=2))

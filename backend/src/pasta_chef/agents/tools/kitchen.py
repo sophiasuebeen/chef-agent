@@ -1,10 +1,14 @@
 """Per-episode adapters: rules remain in simulation/kitchen.py."""
+from time import monotonic
+
 from pasta_chef.simulation.observation import build_observation
 from pasta_chef.simulation.recipes import load_recipe
 
 
 class EpisodeLimit(RuntimeError):
-    pass
+    def __init__(self, message: str, reason: str = "episode_limit"):
+        super().__init__(message)
+        self.reason = reason
 
 
 class KitchenTools:
@@ -13,18 +17,25 @@ class KitchenTools:
         self.settings = settings
         self.tool_calls = 0
         self.model_calls = 0
+        self.deadline = monotonic() + settings.timeout_seconds
+
+    def _check_wall_clock(self):
+        if monotonic() >= self.deadline:
+            raise EpisodeLimit("Wall-clock time limit reached.", "wall_clock_limit")
 
     def before_model(self):
+        self._check_wall_clock()
         if self.model_calls >= self.settings.max_model_calls:
-            raise EpisodeLimit("Model call limit reached.")
+            raise EpisodeLimit("Model call limit reached.", "model_call_limit")
         self.model_calls += 1
 
     def _call(self, operation, *args):
+        self._check_wall_clock()
         if self.tool_calls >= self.settings.max_tool_calls:
-            raise EpisodeLimit("Tool call limit reached.")
+            raise EpisodeLimit("Tool call limit reached.", "tool_call_limit")
         self.tool_calls += 1
         if self.kitchen.state.time > self.settings.max_simulated_time:
-            raise EpisodeLimit("Simulated time limit reached.")
+            raise EpisodeLimit("Simulated time limit reached.", "simulated_time_limit")
         try:
             result = operation(*args)
         except (KeyError, ValueError) as error:
@@ -49,7 +60,7 @@ class KitchenTools:
         def advance():
             running = self.kitchen.state.running_tasks
             if running and min(t.finishes_at for t in running) > self.settings.max_simulated_time:
-                raise EpisodeLimit("Next event exceeds simulated time limit.")
+                raise EpisodeLimit("Next event exceeds simulated time limit.", "simulated_time_limit")
             return self.kitchen.advance_to_next_event()
         return self._call(advance)
 

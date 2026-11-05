@@ -1,0 +1,25 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "ChefAgent: OpenAI demo",
+      "type": "debugpy",
+      "request": "launch",
+      "python": "${workspaceFolder}/backend/.venv/bin/python",
+      "program": "${workspaceFolder}/scripts/run_local.py",
+      "cwd": "${workspaceFolder}",
+      "args": [
+        "--mode",
+        "agent",
+        "--model",
+        "openai/gpt-4o"
+      ],
+      "env": {
+        "PYTHONPATH": "${workspaceFolder}/backend/src"
+      },
+      "envFile": "${workspaceFolder}/.env",
+      "console": "integratedTerminal",
+      "justMyCode": true
+    }
+  ]
+}

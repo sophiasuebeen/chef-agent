@@ -6,6 +6,9 @@ PYTHONPATH=backend/src backend/.venv/bin/python -m unittest discover -s tests -v
 import asyncio
 from copy import deepcopy
 import json
+import os
+from pathlib import Path
+from tempfile import TemporaryDirectory
 import unittest
 from unittest.mock import patch
 
@@ -129,6 +132,44 @@ class ScriptedWorkflowTests(unittest.TestCase):
         self.assertEqual(self.kitchen.state.events, [])
         self.assertEqual(self.kitchen.add_order("lemon_pasta").id, "order_1")
 
+    def test_service_at_deadline_is_on_time(self):
+        self.order.deadline = 710
+        self.assertTrue(run_scripted(self.kitchen, self.order.id)["on_time"])
+
+    def test_root_env_loaded_and_gemini_api_selected_before_adk(self):
+        try:
+            import dotenv
+        except ImportError:
+            self.skipTest("optional dotenv dependency is not installed")
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / ".env").write_text(
+                "GOOGLE_API_KEY=offline-test-value\nCHEF_MODEL=gemini-test\n"
+            )
+            module_path = root / "backend" / "src" / "pasta_chef" / "config.py"
+            with patch("pasta_chef.config.__file__", str(module_path)), patch.dict(
+                os.environ, {"GOOGLE_GENAI_USE_VERTEXAI": "true"}, clear=True
+            ):
+                settings = Settings.from_env()
+                self.assertEqual(settings.model, "gemini-test")
+                self.assertEqual(os.environ["GOOGLE_API_KEY"], "offline-test-value")
+                self.assertEqual(os.environ["GOOGLE_GENAI_USE_VERTEXAI"], "false")
+
+    def test_openai_credentials_do_not_require_google_auth(self):
+        from pasta_chef.config import ConfigurationError, require_model_credentials
+        with patch.dict(os.environ, {"OPENAI_API_KEY": "offline-test-value"}, clear=True):
+            require_model_credentials("openai/gpt-4o")
+            require_model_credentials("gpt-4o")
+        with patch.dict(os.environ, {}, clear=True), self.assertRaises(ConfigurationError):
+            require_model_credentials("openai/gpt-4o")
+
+    def test_settings_reject_unbounded_limits(self):
+        for args in ({"max_model_calls": 0}, {"max_tool_calls": -1},
+                     {"max_simulated_time": True}, {"timeout_seconds": float("inf")},
+                     {"timeout_seconds": 0}, {"model": " "}):
+            with self.subTest(args=args), self.assertRaises(ValueError):
+                Settings(**args)
+
     def test_wrapper_errors_and_tool_limit(self):
         tools = KitchenTools(self.kitchen, Settings(max_tool_calls=1))
         before = deepcopy(self.kitchen.state)
@@ -163,6 +204,9 @@ if BaseLlm is not None:
                 raise ConnectionError("mock provider unavailable")
             if self.mode == "text":
                 parts = [types.Part(text="The dish is served!")]
+            elif self.mode == "invalid":
+                parts = [types.Part(function_call=types.FunctionCall(
+                    name="start_task", args={"order_id": "order_1", "task_id": "prepare_sauce"}))]
             elif self.mode in ("read", "parallel"):
                 parts = [types.Part(function_call=types.FunctionCall(
                     name="get_kitchen_state", args={})) for _ in range(4 if self.mode == "parallel" else 1)]
@@ -200,6 +244,24 @@ class MockedAdkWorkflowTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(result["ok"])
         self.assertEqual(result["model_calls"], 3)
         self.assertEqual(kitchen.get_order("order_1").status, "pending")
+
+    async def test_live_configuration_missing_fails_before_model_call(self):
+        from pasta_chef.runtime.controller import run_agent_episode
+        kitchen = Kitchen()
+        kitchen.add_order("lemon_pasta")
+        with patch.dict(os.environ, {}, clear=True):
+            result = await run_agent_episode(kitchen, Settings())
+        self.assertFalse(result["ok"])
+        self.assertIn("credentials unavailable", result["error"])
+        self.assertEqual(result["model_calls"], 0)
+        self.assertEqual(result["tool_calls"], 0)
+
+    async def test_rejected_actions_consume_attempt_budget(self):
+        kitchen, _, result = await self.run_episode("invalid", max_tool_calls=2)
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["tool_calls"], 2)
+        self.assertEqual(kitchen.get_order("order_1").status, "pending")
+        self.assertEqual(len(kitchen.state.events), 1)
 
     async def test_read_loop_hits_tool_budget(self):
         _, _, result = await self.run_episode("read", max_tool_calls=2)

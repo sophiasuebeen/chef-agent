@@ -3,6 +3,4 @@
 !.env.example
 .venv/
 __pycache__/
-*.pyc
-node_modules/
-AGENTS.md
+*.py[cod]

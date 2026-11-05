@@ -3,12 +3,14 @@ import asyncio
 import json
 
 from pasta_chef.agents.tools.kitchen import EpisodeLimit, KitchenTools
+from pasta_chef.config import ConfigurationError
 from pasta_chef.simulation.observation import build_observation
 from pasta_chef.simulation.recipes import load_recipe
 
 
-async def run_agent_episode(kitchen, settings, *, model=None) -> dict:
+async def run_agent_episode(kitchen, settings, *, model=None, prompt_variant="original") -> dict:
     """Use one real ADK Runner; tests may inject a credential-free BaseLlm."""
+    from google.adk.agents.invocation_context import LlmCallsLimitExceededError
     from google.adk.agents.run_config import RunConfig
     from google.adk.runners import Runner
     from google.adk.sessions import InMemorySessionService
@@ -18,11 +20,16 @@ async def run_agent_episode(kitchen, settings, *, model=None) -> dict:
     tools = KitchenTools(kitchen, settings)
 
     async def episode():
+        if model is None:
+            from pasta_chef.config import require_model_credentials
+            require_model_credentials(settings.model)
         if not kitchen.state.orders:
             raise ValueError("Accept an order before starting the chef.")
         sessions = InMemorySessionService()
         session = await sessions.create_session(app_name="pasta_chef", user_id="terminal")
-        chef = create_chef_agent(tools, settings.model if model is None else model)
+        chef = create_chef_agent(
+            tools, settings.model if model is None else model, prompt_variant=prompt_variant
+        )
         async with Runner(app_name="pasta_chef", agent=chef, session_service=sessions) as runner:
             while any(o.status != "served" for o in kitchen.state.orders.values()):
                 observation = build_observation(kitchen.state)
@@ -33,13 +40,13 @@ async def run_agent_episode(kitchen, settings, *, model=None) -> dict:
                 )
                 if not any(observation["available_tasks"].values()) and not can_serve:
                     if not kitchen.state.running_tasks:
-                        raise EpisodeLimit("Kitchen cannot make progress.")
+                        raise EpisodeLimit("Kitchen cannot make progress.", "no_progress")
                     tools.advance_to_next_event()
                     continue
                 if tools.model_calls >= settings.max_model_calls:
-                    raise EpisodeLimit("Model call limit reached.")
+                    raise EpisodeLimit("Model call limit reached.", "model_call_limit")
                 if tools.tool_calls >= settings.max_tool_calls:
-                    raise EpisodeLimit("Tool call limit reached.")
+                    raise EpisodeLimit("Tool call limit reached.", "tool_call_limit")
                 message = types.Content(role="user", parts=[types.Part(
                     text="Choose your next cooking tool. " + json.dumps(observation))])
                 # A tool round ends the invocation via skip_summarization. A
@@ -51,17 +58,26 @@ async def run_agent_episode(kitchen, settings, *, model=None) -> dict:
                 ):
                     if event.error_code:
                         raise RuntimeError(f"Model response failed ({event.error_code}).")
-        return {"ok": True, "status": "served"}
+        return {"ok": True, "status": "served", "termination_reason": "completed"}
 
     try:
         result = await asyncio.wait_for(episode(), timeout=settings.timeout_seconds)
     except asyncio.TimeoutError:
-        result = {"ok": False, "status": "stopped", "error": "Wall-clock time limit reached."}
-    except (EpisodeLimit, ValueError) as error:
-        result = {"ok": False, "status": "stopped", "error": str(error)}
+        result = {"ok": False, "status": "stopped", "error": "Wall-clock time limit reached.",
+                  "termination_reason": "wall_clock_limit"}
+    except EpisodeLimit as error:
+        result = {"ok": False, "status": "stopped", "error": str(error),
+                  "termination_reason": error.reason}
+    except LlmCallsLimitExceededError:
+        result = {"ok": False, "status": "stopped", "error": "Model call limit reached.",
+                  "termination_reason": "model_call_limit"}
+    except ConfigurationError as error:
+        result = {"ok": False, "status": "failed", "error": str(error),
+                  "termination_reason": "configuration_error"}
     except Exception as error:
         # Provider exception strings can contain request details. Keep secrets
         # out of the terminal while still identifying the failure class.
-        result = {"ok": False, "status": "failed", "error": type(error).__name__}
+        result = {"ok": False, "status": "failed", "error": type(error).__name__,
+                  "termination_reason": "api_error"}
     return dict(result, model_calls=tools.model_calls, tool_calls=tools.tool_calls,
                 observation=build_observation(kitchen.state))
