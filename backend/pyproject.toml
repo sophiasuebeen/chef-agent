@@ -14,3 +14,8 @@ agent = [
     "litellm>=1.83.7,<=1.83.14",
     "python-dotenv>=1,<2",
 ]
+api = [
+    "fastapi>=0.141,<1",
+    "uvicorn>=0.54,<1",
+    "httpx>=0.28,<1", # Required by FastAPI's TestClient in backend/tests.
+]
