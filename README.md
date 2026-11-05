@@ -4,6 +4,17 @@ One lemon-pasta order, one Google ADK ChefAgent, one chef, one burner, pot and
 pan. The simulator owns all rules. Inventory is assumed sufficient; vessel
 contents, cooling and overcooking are not modeled.
 
+## Restaurant scene
+
+Work-in-progress 3D renders of the dining room and terrace. The scene code is in
+[PR #4](https://github.com/sophiasuebeen/chefAgent/pull/4).
+
+| Dining room | Terrace |
+| --- | --- |
+| ![Dining room at golden hour](docs/images/scene-dining.png) | ![Terrace at golden hour](docs/images/scene-terrace.png) |
+
+## Terminal demo
+
 Python 3.12+ is required. Run commands from this repository root.
 
 The simulator and scripted baseline need no packages or credentials:
