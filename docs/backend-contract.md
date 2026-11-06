@@ -7,13 +7,18 @@ from `pasta_chef.simulation.observation`. All times are integer simulated second
 
 ## State
 
-`Kitchen(*, duration_sampler=None)` creates `kitchen.state: KitchenState`: time 0, orders {},
+`Kitchen(*, duration_sampler=None, chefs=1)` creates `kitchen.state: KitchenState`: time 0, orders {},
 next_order_number 1, running_tasks [], and resources chef/burner/pot/pan all None.
-Resource owners are `(order_id, task_id)` tuples. Each order owns a separate
+`chefs` is an integer from 1 to 4, else ValueError. With N > 1, `chef_2` ... `chef_N`
+follow `chef`. With 1 chef, state, events and replays are unchanged.
+`chef_names(state)` returns all chef resource names and `free_chef(state)` the first
+free one or None; both live in `simulation/kitchen.py`. Use them instead of literal
+lookups. Resource owners are `(order_id, task_id)` tuples, but an owner need not be a
+real order: a chef reserved for conversation has `("customer", "chat")`. Each order owns a separate
 completed_tasks list. `state.events` is the full successful action log;
 `state.last_action_result` is the most recent action result (initially None).
 `kitchen.reset()` replaces state with a fresh KitchenState; it retains the
-configured duration_sampler.
+configured duration_sampler and chef count.
 
 Without a sampler, tasks use the recipe duration. An optional callable
 `duration_sampler(order, task)` receives deep copies of the order and validated
@@ -26,7 +31,8 @@ instead (see [priority scheduling](priority-scheduling.md)).
 
 `Order` fields: id, menu, created_at, deadline, status (pending/cooking/served),
 completed_tasks, served_at (initially None), on_time (initially None).
-`RunningTask` fields: order_id, task_id, finishes_at, resources.
+`RunningTask` fields: order_id, task_id, finishes_at, resources (with the concrete
+chef name assigned).
 
 ## Public operations
 
@@ -60,6 +66,10 @@ order cooking. Does not advance time. Return exactly:
 {"ok": true, "action": "task_started", "time": 0,
  "order_id": "order_1", "task_id": "collect_ingredients", "finishes_at": 20}
 ```
+
+A recipe's `chef` means any one free chef: validation needs one free, and start
+assigns the first. With more than one chef, a task that takes a chef also has
+`"chef": "chef_2"` (the assigned name) in its result and event; background tasks do not.
 
 Unknown order/task raises KeyError. Served order, duplicate task, missing
 dependency, unavailable resource, or invalid recipe duration/resources raises
@@ -117,7 +127,7 @@ Return a detached JSON-serializable snapshot; never mutate state. Keys:
 - time: current simulated timestamp.
 - orders: list of active (unserved) orders, as dictionaries of all Order fields.
 - resources: resource -> owner as a two-element list, or None.
-- chef_available: resources['chef'] is None.
+- chef_available: true if any chef is free.
 - running_tasks: list of all RunningTask fields plus remaining_time=finishes_at-time.
 - completed_tasks: order ID -> list of task IDs, including served orders.
 - available_tasks: active order ID -> list of startable task ID strings in recipe order.

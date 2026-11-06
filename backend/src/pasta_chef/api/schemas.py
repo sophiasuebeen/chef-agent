@@ -3,6 +3,8 @@ from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, StrictInt, StrictStr
 
+from pasta_chef.simulation.kitchen import MAX_CHEFS
+
 
 # Largest integer JavaScript clients can represent exactly. A transport limit, not a cooking rule.
 MAX_JSON_SAFE_INT = 2**53 - 1
@@ -10,6 +12,15 @@ MAX_JSON_SAFE_INT = 2**53 - 1
 
 class ErrorResponse(BaseModel):
     detail: str
+
+
+# Shared by run and session creation. The simulator validates the same range.
+ChefCount = Annotated[StrictInt, Field(ge=1, le=MAX_CHEFS, description="Number of chefs in the kitchen.")]
+
+
+class RunCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    chefs: ChefCount = 1
 
 
 class RunCreated(BaseModel):

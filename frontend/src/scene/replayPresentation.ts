@@ -20,7 +20,36 @@ const MOTIONS: Record<string, ChefMotion> = {
 const STEAMING = ['boil_water', 'cook_pasta_halfway', 'reserve_water_and_drain', 'prepare_sauce',
   'start_tomato_sauce', 'simmer_tomato_sauce', 'cook_seafood', 'finish_pasta'];
 
+export const isChefResource = (name: string) => name === 'chef' || name.startsWith('chef_');
+
+/** Same names as the simulator: chef, chef_2, ... */
+export const chefNamesFor = (count: number) =>
+  Array.from({ length: count }, (_, index) => index === 0 ? 'chef' : `chef_${index + 1}`);
+
+export const idleResources = (chefs: number): ReplayState['resources'] =>
+  Object.fromEntries([...chefNamesFor(chefs), 'burner', 'pot', 'pan'].map((name) => [name, null]));
+
+const STATION_PITCH = 1.6;
+const COUNTER_REACH = 0.18;
+
+/**
+ * Where a chef stands relative to a station's spot: [sideways, extra step toward the counter].
+ * Each chef keeps one lane everywhere, spaced so lanes never coincide even at the next station
+ * along. Three or four lanes are narrower than a chef's arms, so odd lanes also step forward.
+ */
+export function chefOffset(index: number, count: number): [number, number] {
+  return [(index - (count - 1) / 2) * STATION_PITCH / count, count >= 3 && index % 2 === 1 ? 0.14 : 0];
+}
+
+export function chefStandPoint(station: { position: readonly number[]; chefSpot: readonly number[] },
+  offset: readonly [number, number]): [x: number, z: number] {
+  const toCounter = Math.sign(station.position[2]! - station.chefSpot[2]!);
+  return [station.chefSpot[0]! + offset[0], station.chefSpot[2]! + toCounter * (COUNTER_REACH + offset[1])];
+}
+
 export interface ChefActivity {
+  name: string;
+  offset: [number, number];
   station: StationType;
   fromStation: StationType;
   motion: ChefMotion;
@@ -44,16 +73,22 @@ export interface StationActivity {
 export interface KitchenFrame {
   time: number;
   sequence: number;
+  /** The first chef. One entry of `chefs`, kept for single-chef camera and captions. */
   chef: ChefActivity;
+  chefs: ChefActivity[];
   stations: StationActivity[];
   served: { orderId: string; menu: string; servedAt: number; onTime: boolean; sequence: number }[];
 }
 
-export function kitchenFrame(replay: Replay | null, state: ReplayState | null, sequence: number): KitchenFrame {
+export function kitchenFrame(replay: Replay | null, state: ReplayState | null, sequence: number, idleChefs = 1): KitchenFrame {
   const time = state?.time ?? 0;
-  const idle: ChefActivity = { station: 'pass', fromStation: 'pass', motion: 'idle',
-    taskId: null, orderId: null, elapsed: 0, travel: 1 };
-  if (!replay || !state) return { time, sequence, chef: idle, stations: [], served: [] };
+  const idle = (name: string, index: number, count: number): ChefActivity => ({ name, offset: chefOffset(index, count),
+    station: 'pass', fromStation: 'pass', motion: 'idle', taskId: null, orderId: null, elapsed: 0, travel: 1 });
+  if (!replay || !state) {
+    const chefs = chefNamesFor(idleChefs).map((name, index) => idle(name, index, idleChefs));
+    return { time, sequence, chef: chefs[0]!, chefs, stations: [], served: [] };
+  }
+  const names = Object.keys(replay.initial_conditions.resources).filter(isChefResource);
   const events = replay.events.filter((event) => event.sequence <= sequence && event.time <= time);
   const starts = events.filter((event) => event.action === 'task_started').reverse();
   const menuOf = (orderId: string) => state.orders.find((order) => order.id === orderId)?.menu ?? '';
@@ -66,27 +101,37 @@ export function kitchenFrame(replay: Replay | null, state: ReplayState | null, s
     const order = state!.orders.find((o) => o.id === event.order_id);
     return !!order && !!replay!.recipes[order.menu]?.tasks.find((t) => t.id === event.task_id)?.resources.includes('chef');
   }
-  const actions = events.filter(needsChef);
-  const activeChef = state.running_tasks.find((task) => task.resources.includes('chef'));
-  // Service is an instantaneous simulator event and can occur while another
-  // order owns the chef. Keep that chef's ongoing work; the pass still shows service.
-  const latest = activeChef ? starts.find((event) => event.order_id === activeChef.order_id && event.task_id === activeChef.task_id)
-    : actions.at(-1);
-  const previous = latest ? actions.filter((event) => event.sequence < latest.sequence).at(-1) : undefined;
+  // The simulator does not say who serves. Show the chef who last worked on that order.
+  const actionsByChef = new Map<string, ReplayEvent[]>(names.map((name) => [name, []]));
+  const lastChefOfOrder = new Map<string, string>();
+  for (const event of events.filter(needsChef)) {
+    if (event.action !== 'task_started' && event.action !== 'order_served') continue;
+    const name = event.action === 'task_started' ? event.chef ?? names[0]! : lastChefOfOrder.get(event.order_id) ?? names[0]!;
+    lastChefOfOrder.set(event.order_id, name);
+    actionsByChef.get(name)?.push(event);
+  }
   const stationFor = (event: ReplayEvent | undefined): StationType =>
     event?.action === 'task_started' ? TASK_STATIONS[event.task_id] ?? 'prep' : 'pass';
-  let chef = idle;
-  if (latest && (latest.action === 'task_started' || latest.action === 'order_served')) {
+  const chefs = names.map((name, index): ChefActivity => {
+    const actions = actionsByChef.get(name) ?? [];
+    const activeChef = state.running_tasks.find((task) => task.resources.includes(name));
+    // Service is an instantaneous simulator event and can occur while another
+    // order owns the chef. Keep that chef's ongoing work; the pass still shows service.
+    const latest = activeChef ? starts.find((event) => event.order_id === activeChef.order_id && event.task_id === activeChef.task_id)
+      : actions.at(-1);
+    const previous = latest ? actions.filter((event) => event.sequence < latest.sequence).at(-1) : undefined;
+    if (!latest || (latest.action !== 'task_started' && latest.action !== 'order_served')) return idle(name, index, names.length);
     const running = latest.action === 'task_started' && state.running_tasks.some(
-      (t) => t.order_id === latest.order_id && t.task_id === latest.task_id && t.resources.includes('chef'));
+      (t) => t.order_id === latest.order_id && t.task_id === latest.task_id && t.resources.includes(name));
     const elapsed = Math.max(0, time - latest.time);
     // Service has no simulator duration. Hold its pose until a later chef action,
     // including a later action with the same timestamp but a higher sequence.
-    chef = { station: stationFor(latest), fromStation: previous ? stationFor(previous) : stationFor(latest),
+    return { name, offset: chefOffset(index, names.length), station: stationFor(latest),
+      fromStation: previous ? stationFor(previous) : stationFor(latest),
       motion: latest.action === 'order_served' ? 'serve' : running ? MOTIONS[latest.task_id] ?? 'idle' : 'idle',
       taskId: latest.action === 'task_started' && running ? latest.task_id : null,
       orderId: latest.order_id, elapsed, travel: latest.action === 'order_served' ? 1 : Math.min(1, elapsed / 0.8) };
-  }
+  });
   const active = state.running_tasks.map((task): StationActivity => {
     const startedAt = starts.find((event) => event.order_id === task.order_id && event.task_id === task.task_id)?.time ?? time;
     const duration = task.finishes_at - startedAt;
@@ -95,5 +140,5 @@ export function kitchenFrame(replay: Replay | null, state: ReplayState | null, s
       steam: STEAMING.includes(task.task_id),
       elapsed: time - startedAt, progress: duration > 0 ? (time - startedAt) / duration : 0 };
   });
-  return { time, sequence, chef, stations: active, served };
+  return { time, sequence, chef: chefs[0]!, chefs, stations: active, served };
 }

@@ -30,12 +30,14 @@ provider retries, decision logs, and progress heartbeats. Evaluation compares
 prompt variants and supports offline priority-rule evolution. The priority
 scheduler supports exact-time arrivals and completed-duration EMA history;
 `Kitchen(duration_sampler=...)` optionally varies task duration at start.
+`Kitchen(chefs=n)` (1-4, default 1) makes each chef a real resource; the API and
+the order panel's 셰프 수 input pass it through.
 
 The development HTTP API creates in-memory runs, accepts/reads orders, exposes
 state, lists registered usable recipes through `GET /menus`, executes scripted/priority/agent episodes once, and returns frozen versioned
 replays. The React frontend accepts orders and reconstructs kitchen replay state
 with play/pause/speed/event/time seeking and a backend final-state check. The same
-cursor drives the existing 3D kitchen: procedural articulated chef, per-station
+cursor drives the existing 3D kitchen: procedural articulated chefs, per-station
 cooking actions, independent heating/steam and sequenced service dishes. The
 scene development view remains available at `?scene`.
 
@@ -156,14 +158,14 @@ Each order has independent progress. Two lemon-pasta orders must not share compl
 - `running_tasks`: active RunningTask objects.
 - `resources`: resource name → owning `(order_id, task_id)` or `None`.
 
-Initial resource names: `chef`, `burner`, `pot`, `pan`. Chef availability is derived from ownership of `chef`; avoid an independently maintained busy flag that can disagree.
+Initial resource names: `chef`, `burner`, `pot`, `pan`, plus `chef_2` ... `chef_N` after `chef` with `Kitchen(chefs=N)`. Chef availability is derived from ownership through `chef_names(state)` and `free_chef(state)` in `simulation/kitchen.py`; avoid literal `chef` lookups and an independently maintained busy flag that can disagree. Not every owner is a real order: a chef reserved for conversation is owned by `("customer", "chat")`.
 
 ### RunningTask
 
 - `order_id`
 - `task_id`
 - `finishes_at`: start time plus recipe duration.
-- `resources`: resources reserved for this execution.
+- `resources`: resources reserved for this execution, with the concrete chef assigned.
 
 ### Recipe JSON
 
@@ -178,7 +180,7 @@ Initial resource names: `chef`, `burner`, `pot`, `pan`. Chef availability is der
 1. Validate before mutating state. Rejected actions leave state unchanged.
 2. Reject unknown orders/tasks, already-running/completed tasks, served orders, missing dependencies, and unavailable resources.
 3. `start_task(order_id, task_id)` reserves resources and registers completion time; it does not advance time.
-4. Tasks requiring `chef` occupy the chef for their duration. Background tasks omit `chef`, allowing preparation concurrently.
+4. In a recipe, `chef` means any one free chef. Validation needs one free, and `start_task` assigns the first, holding it for the task's duration. Background tasks omit `chef`, allowing preparation concurrently. `holds` never name chefs.
 5. `advance_to_next_event()` advances to the earliest task completion and completes ALL tasks at that timestamp. Optional keyword `until` can stop at an arrival/time boundary; see `docs/backend-contract.md`.
 6. On completion, update the owning order, release only resources owned by that task except those named in its `holds`, and remove the running task.
 7. With no running tasks and no `until`, advancing returns an explicit no-op result. An explicit future `until` advances idle time and logs `time_advanced`.
@@ -242,7 +244,7 @@ The agent chooses the next action or waits. Simulator validation still applies e
 
 ## ADK integration
 
-The current runtime uses ONE ChefAgent. Different menus are recipe data, not separate agents.
+The current runtime uses ONE ChefAgent, which directs every chef in the kitchen. Different menus are recipe data, not separate agents.
 
 Implemented tools: `get_recipe`, `get_kitchen_state`, `start_task`, `advance_to_next_event`, `serve_order`. Tool wrappers call the simulator and return structured results with fresh observations. Do not duplicate cooking rules in prompts or callbacks.
 
@@ -308,7 +310,7 @@ live commands. Do not run paid live experiments as routine offline verification.
 - Live event streaming and delivery from pass to dining tables.
 - Persistent storage, event streaming, production run lifecycle management.
 - Inventory depletion, station breakdowns, quality/hold timing, spatial costs.
-- Customer questions, supported order modifications, reviews, multiple chefs,
+- Customer questions, supported order modifications, reviews,
   human play/cooperation.
 
 Character movement remains visual presentation. Movement costs and spatial

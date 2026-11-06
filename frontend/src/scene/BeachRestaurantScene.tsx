@@ -117,7 +117,7 @@ export function BeachRestaurantScene({
 
   return (
     <Canvas shadows="soft" dpr={[1, 1.5]} gl={{ antialias: false, stencil: false }} camera={{ near: 0.2, far: 3200 }}>
-      <Lighting shadowTime={replayFrame?.time} shadowSequence={replayFrame?.sequence} />
+      <Lighting shadowTime={replayFrame?.time} shadowSequence={replayFrame?.sequence} shadowChefs={replayFrame?.chefs.length} />
       <CameraRig uiSafeArea={uiSafeArea} chefFocus={chefFocus} />
       <PointerRoot onObjectClick={onObjectClick} onObjectHover={onObjectHover}>
         <StaticKitchen />

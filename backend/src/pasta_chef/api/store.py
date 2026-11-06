@@ -26,9 +26,9 @@ class RunStore:
     def __init__(self) -> None:
         self._runs: dict[str, Run] = {}
 
-    def create(self) -> str:
+    def create(self, chefs: int = 1) -> str:
         run_id = uuid4().hex
-        self._runs[run_id] = Run()
+        self._runs[run_id] = Run(kitchen=Kitchen(chefs=chefs))
         return run_id
 
     def get(self, run_id: str) -> Run:

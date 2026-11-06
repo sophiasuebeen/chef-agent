@@ -2,10 +2,12 @@ import { useFrame } from '@react-three/fiber';
 import { useMemo, useRef } from 'react';
 import { BufferAttribute, BufferGeometry, DoubleSide, FrontSide, Group, MeshStandardMaterial } from 'three';
 import { stations } from '../../data/layout';
-import type { ChefActivity } from '../replayPresentation';
+import { chefStandPoint, type ChefActivity } from '../replayPresentation';
 
 const COLORS = { skin: '#edcfb3', jacket: '#faf8f1', navy: '#293f66', pants: '#252a33',
   hair: '#171412', lemon: '#f6cf31', eye: '#30231f', white: '#fffcf4' };
+/** Apron and collar per chef, so several can be told apart. The first keeps the reference navy. */
+const TRIM = [COLORS.navy, '#7c2f33', '#2f6a4c', '#7a5a22'];
 
 /** Thin scalp-following curtain, parted at the front, ending at chest height. */
 function hairGeometry() {
@@ -43,7 +45,7 @@ function armAngles(y: number, z: number) {
 }
 
 /** ~7 heads without the toque, with independent shoulders, elbows, wrists, hips and knees. */
-export function Chef({ activity, time }: { activity: ChefActivity; time: number }) {
+export function Chef({ activity, index = 0, time }: { activity: ChefActivity; index?: number; time: number }) {
   const root = useRef<Group>(null), torso = useRef<Group>(null);
   const shoulders = [useRef<Group>(null), useRef<Group>(null)];
   const elbows = [useRef<Group>(null), useRef<Group>(null)];
@@ -51,8 +53,8 @@ export function Chef({ activity, time }: { activity: ChefActivity; time: number 
   const hips = [useRef<Group>(null), useRef<Group>(null)];
   const knees = [useRef<Group>(null), useRef<Group>(null)];
   const hair = useMemo(hairGeometry, []);
-  const materials = useMemo(() => Object.fromEntries(Object.entries(COLORS).map(([key, color]) =>
-    [key, new MeshStandardMaterial({ color, roughness: key === 'hair' ? 0.97 : 0.78, side: key === 'hair' ? DoubleSide : FrontSide })])) as Record<keyof typeof COLORS, MeshStandardMaterial>, []);
+  const materials = useMemo(() => Object.fromEntries(Object.entries({ ...COLORS, navy: TRIM[index] ?? COLORS.navy }).map(([key, color]) =>
+    [key, new MeshStandardMaterial({ color, roughness: key === 'hair' ? 0.97 : 0.78, side: key === 'hair' ? DoubleSide : FrontSide })])) as Record<keyof typeof COLORS, MeshStandardMaterial>, [index]);
 
   useFrame(() => {
     if (!root.current || !torso.current) return;
@@ -61,11 +63,11 @@ export function Chef({ activity, time }: { activity: ChefActivity; time: number 
     const progress = activity.travel * activity.travel * (3 - 2 * activity.travel);
     const walking = progress < 1 && target.type !== previous.type;
     const phase = activity.elapsed * 2.1;
-    const fromZ = previous.chefSpot[2] + Math.sign(previous.position[2] - previous.chefSpot[2]) * 0.18;
-    const toZ = target.chefSpot[2] + Math.sign(target.position[2] - target.chefSpot[2]) * 0.18;
-    root.current.position.set(previous.chefSpot[0] + (target.chefSpot[0] - previous.chefSpot[0]) * progress,
+    const [fromX, fromZ] = chefStandPoint(previous, activity.offset);
+    const [toX, toZ] = chefStandPoint(target, activity.offset);
+    root.current.position.set(fromX + (toX - fromX) * progress,
       walking ? Math.abs(Math.sin(phase * 4)) * 0.012 : 0, fromZ + (toZ - fromZ) * progress);
-    root.current.rotation.y = walking ? Math.atan2(target.chefSpot[0] - previous.chefSpot[0], toZ - fromZ)
+    root.current.rotation.y = walking ? Math.atan2(toX - fromX, toZ - fromZ)
       : target.position[2] < target.chefSpot[2] ? Math.PI : 0;
     torso.current.rotation.set(activity.motion === 'idle' || walking ? 0 : 0.045, 0,
       activity.motion === 'idle' ? Math.sin(time * 0.5) * 0.004 : 0);
@@ -96,7 +98,7 @@ export function Chef({ activity, time }: { activity: ChefActivity; time: number 
     }
   });
 
-  return <group ref={root} name="replay.chef" userData={{ kind: 'chef', id: 'chef' }}>
+  return <group ref={root} name={`replay.${activity.name}`} userData={{ kind: 'chef', id: activity.name }}>
     {[0, 1].map((side) => <group key={side} ref={hips[side]} position={[side === 0 ? -0.095 : 0.095, 0.84, 0]}>
       <mesh position={[0, -0.205, 0]} material={materials.pants} castShadow><capsuleGeometry args={[0.069, 0.285, 6, 12]} /></mesh>
       <group ref={knees[side]} position={[0, -0.4, 0]}>
