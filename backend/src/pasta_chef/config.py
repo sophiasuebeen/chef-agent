@@ -11,6 +11,8 @@ class Settings:
     max_tool_calls: int = 80
     max_simulated_time: int = 1200
     timeout_seconds: float = 300
+    # Let the controller take actions with no real choice instead of asking the model.
+    skip_forced_moves: bool = False
 
     def __post_init__(self):
         if not self.model.strip():

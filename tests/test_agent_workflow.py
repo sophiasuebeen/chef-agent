@@ -32,6 +32,58 @@ except ImportError:
     BaseLlm = None
 
 
+class ForcedActionTests(unittest.TestCase):
+    def forced(self, kitchen):
+        from pasta_chef.runtime.controller import forced_action
+        return forced_action(kitchen.state, build_observation(kitchen.state))
+
+    def finish_collecting(self, kitchen, order_id="order_1"):
+        kitchen.start_task(order_id, "collect_ingredients")
+        kitchen.advance_to_next_event()
+
+    def test_lone_task_of_the_last_order_is_forced(self):
+        kitchen = Kitchen()
+        kitchen.add_order("lemon_pasta")
+        self.assertEqual(self.forced(kitchen), (
+            "start_task", {"order_id": "order_1", "task_id": "collect_ingredients"}))
+
+    def test_several_startable_tasks_stay_with_the_chef(self):
+        kitchen = Kitchen()
+        kitchen.add_order("lemon_pasta")
+        self.finish_collecting(kitchen)
+        self.assertIsNone(self.forced(kitchen))
+
+    def test_competing_orders_stay_with_the_chef(self):
+        kitchen = Kitchen()
+        kitchen.add_order("lemon_pasta")
+        kitchen.add_order("lemon_pasta")
+        self.assertIsNone(self.forced(kitchen))
+
+    def test_finished_order_is_served_even_while_another_competes(self):
+        kitchen = Kitchen()
+        kitchen.add_order("lemon_pasta")
+        run_scripted(kitchen, "order_1")
+        kitchen.state.orders["order_1"].status = "cooking"
+        kitchen.add_order("lemon_pasta")
+        self.assertEqual(self.forced(kitchen), ("serve_order", {"order_id": "order_1"}))
+
+    def test_nothing_is_forced_once_everything_is_served(self):
+        kitchen = Kitchen()
+        kitchen.add_order("lemon_pasta")
+        run_scripted(kitchen, "order_1")
+        self.assertIsNone(self.forced(kitchen))
+
+    def test_checking_for_a_forced_action_changes_nothing(self):
+        kitchen = Kitchen()
+        kitchen.add_order("lemon_pasta")
+        before = deepcopy(kitchen.state)
+        self.forced(kitchen)
+        self.assertEqual(kitchen.state, before)
+
+    def test_off_by_default(self):
+        self.assertFalse(Settings().skip_forced_moves)
+
+
 class ScriptedWorkflowTests(unittest.TestCase):
     def setUp(self):
         self.kitchen = Kitchen()
@@ -219,6 +271,17 @@ if BaseLlm is not None:
             elif self.mode in ("read", "parallel"):
                 parts = [types.Part(function_call=types.FunctionCall(
                     name="get_kitchen_state", args={})) for _ in range(4 if self.mode == "parallel" else 1)]
+            elif self.mode == "earliest_deadline":
+                orders = sorted(observation["orders"], key=lambda order: order["deadline"])
+                ready = [o for o in orders if "finish_off_heat" in o["completed_tasks"]]
+                startable = [o for o in orders if observation["available_tasks"][o["id"]]]
+                if ready:
+                    name, args = "serve_order", {"order_id": ready[0]["id"]}
+                else:
+                    order_id = startable[0]["id"]
+                    name, args = "start_task", {
+                        "order_id": order_id, "task_id": observation["available_tasks"][order_id][0]}
+                parts = [types.Part(function_call=types.FunctionCall(name=name, args=args))]
             else:
                 order_id = observation["orders"][0]["id"]
                 available = observation["available_tasks"][order_id]
@@ -269,6 +332,57 @@ class MockedAdkWorkflowTests(unittest.IsolatedAsyncioTestCase):
         model = MockChefModel(model="mock-chef", mode=mode)
         result = await run_agent_episode(kitchen, Settings(**settings), model=model)
         return kitchen, model, result
+
+    async def run_two_orders(self, **settings):
+        from pasta_chef.runtime.controller import run_agent_episode
+        kitchen = Kitchen()
+        kitchen.add_order("lemon_pasta", time_limit=1500)
+        kitchen.add_order("lemon_pasta", time_limit=900)
+        model = MockChefModel(model="mock-chef", mode="earliest_deadline")
+        result = await run_agent_episode(
+            kitchen, Settings(max_simulated_time=1800, **settings), model=model)
+        return kitchen, result
+
+    async def test_skipping_forced_moves_saves_calls_without_changing_outcome(self):
+        asked, asked_result = await self.run_two_orders()
+        skipped, skipped_result = await self.run_two_orders(skip_forced_moves=True)
+        self.assertTrue(asked_result["ok"], asked_result)
+        self.assertTrue(skipped_result["ok"], skipped_result)
+        self.assertLess(skipped_result["model_calls"], asked_result["model_calls"])
+        for order_id in ("order_1", "order_2"):
+            self.assertEqual(skipped.get_order(order_id).served_at,
+                             asked.get_order(order_id).served_at)
+            self.assertTrue(skipped.get_order(order_id).on_time)
+
+    async def test_forced_moves_are_attributed_to_the_controller(self):
+        _, result = await self.run_two_orders(skip_forced_moves=True)
+        chef_calls = {entry["model_call"] for entry in result["decision_log"]
+                      if entry["type"] == "tool_call" and entry["source"] == "chef"}
+        self.assertEqual(len(chef_calls), result["model_calls"])
+        served_by = [entry["source"] for entry in result["decision_log"]
+                     if entry["type"] == "tool_call" and entry["tool"] == "serve_order"]
+        self.assertEqual(served_by, ["controller", "controller"])
+
+    async def test_chef_is_told_about_forced_moves_only_when_they_happen(self):
+        from pasta_chef.runtime.controller import run_agent_episode
+        note = "The controller already did: start_task(order_1, collect_ingredients). "
+
+        async def requests(**settings):
+            kitchen = Kitchen()
+            kitchen.add_order("lemon_pasta")
+            model = MockChefModel(model="mock-chef", requests=[])
+            await run_agent_episode(kitchen, Settings(**settings), model=model)
+            return model.requests
+
+        told = await requests(skip_forced_moves=True)
+        self.assertIn(note, told[0])
+        self.assertEqual(told[-1].count(note), 1)  # Stated once, not repeated each call.
+        self.assertFalse(any("The controller already did" in r for r in await requests()))
+
+    async def test_forced_moves_still_consume_the_tool_budget(self):
+        _, result = await self.run_two_orders(skip_forced_moves=True, max_tool_calls=3)
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["termination_reason"], "tool_call_limit")
 
     async def test_real_runner_tools_and_mocked_model_serve(self):
         kitchen, model, result = await self.run_episode()

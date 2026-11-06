@@ -12,10 +12,12 @@ router = APIRouter()
 
 
 @router.post("/runs/{run_id}/orders", status_code=status.HTTP_201_CREATED,
-             response_model=OrderResponse, responses=error_responses(400, 404, 422))
+             response_model=OrderResponse, responses=error_responses(400, 404, 409, 422))
 def create_order(body: OrderCreate, run: Annotated[Run, Depends(get_run)]) -> dict:
     """Accept an order into this run. This does not start cooking or run an agent."""
     with run.lock:
+        if run.replay is not None:
+            raise HTTPException(status_code=409, detail="Run already executed; create a new run for more orders.")
         try:
             return asdict(run.kitchen.add_order(body.menu, body.time_limit))
         except (JSONDecodeError, UnicodeDecodeError):

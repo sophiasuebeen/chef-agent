@@ -13,8 +13,12 @@ DEADLINE_OBJECTIVE = (
 )
 
 
-def get_chef_instruction(prompt_variant: str = "original") -> str:
-    """Original prompt is preserved; deadline adds only an explicit objective."""
+def get_chef_instruction(prompt_variant: str = "original", menus=("lemon_pasta",)) -> str:
+    """Original prompt is preserved; deadline adds only an explicit objective.
+
+    `menus` selects the recipes shown to the chef. The lemon-only default keeps
+    the prompt text that recorded evaluations were run against.
+    """
     if prompt_variant not in ("original", "deadline"):
         raise ValueError(f"Unknown prompt variant: {prompt_variant}")
     original = (
@@ -28,7 +32,7 @@ def get_chef_instruction(prompt_variant: str = "original") -> str:
         "when appropriate. Serve with serve_order only after completion_tasks finish. "
         "Respond to rejected actions using the fresh observation. Never claim service "
         "without a successful serve_order result. Recipe: "
-        + json.dumps(load_recipe("lemon_pasta"))
+        + " Recipe: ".join(json.dumps(load_recipe(menu)) for menu in menus)
     )
     if prompt_variant == "deadline":
         return original + "\n\n" + DEADLINE_OBJECTIVE
@@ -101,7 +105,8 @@ def create_chef_agent(tools, model, *, prompt_variant="original"):
     return Agent(
         name="ChefAgent",
         model=model,
-        instruction=get_chef_instruction(prompt_variant),
+        instruction=get_chef_instruction(
+            prompt_variant, sorted({o.menu for o in tools.kitchen.state.orders.values()})),
         tools=tools.functions(),
         before_model_callback=before_model,
         after_model_callback=after_model,

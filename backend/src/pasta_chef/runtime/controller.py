@@ -7,6 +7,26 @@ from pasta_chef.simulation.observation import build_observation
 from pasta_chef.simulation.recipes import load_recipe
 
 
+def forced_action(state, observation):
+    """Return the (tool, args) that involves no choice, or None to ask the chef.
+
+    A finished dish loses nothing by being served now. With one order left, no
+    other order can compete for resources, so a lone startable task is not a
+    decision either. Anything with a real alternative stays with the chef.
+    """
+    active = [order for order in state.orders.values() if order.status != "served"]
+    running = {task.order_id for task in state.running_tasks}
+    for order in active:
+        completion = set(load_recipe(order.menu)["completion_tasks"])
+        if order.id not in running and completion.issubset(order.completed_tasks):
+            return "serve_order", {"order_id": order.id}
+    if len(active) == 1:
+        available = observation["available_tasks"][active[0].id]
+        if len(available) == 1:
+            return "start_task", {"order_id": active[0].id, "task_id": available[0]}
+    return None
+
+
 async def run_agent_episode(kitchen, settings, *, model=None, prompt_variant="original") -> dict:
     """Use one real ADK Runner; tests may inject a credential-free BaseLlm."""
     from google.adk.agents.invocation_context import LlmCallsLimitExceededError
@@ -29,9 +49,16 @@ async def run_agent_episode(kitchen, settings, *, model=None, prompt_variant="or
         chef = create_chef_agent(
             tools, settings.model if model is None else model, prompt_variant=prompt_variant
         )
+        handled = []
         async with Runner(app_name="pasta_chef", agent=chef, session_service=sessions) as runner:
             while any(o.status != "served" for o in kitchen.state.orders.values()):
                 observation = build_observation(kitchen.state)
+                forced = forced_action(kitchen.state, observation) if settings.skip_forced_moves else None
+                if forced:
+                    tool, args = forced
+                    tools.log_tool_call(tool, args, getattr(tools, tool)(**args), source="controller")
+                    handled.append(f"{tool}({', '.join(args.values())})")
+                    continue
                 can_serve = any(
                     o.status != "served"
                     and set(load_recipe(o.menu)["completion_tasks"]).issubset(o.completed_tasks)
@@ -48,8 +75,11 @@ async def run_agent_episode(kitchen, settings, *, model=None, prompt_variant="or
                 if tools.tool_calls >= settings.max_tool_calls:
                     raise EpisodeLimit("Tool call limit reached.", "tool_call_limit")
                 # The before_model callback appends the current observation.
+                # Forced moves are not in the chef's history, so say they happened.
+                note = f"The controller already did: {'; '.join(handled)}. " if handled else ""
+                handled.clear()
                 message = types.Content(role="user", parts=[types.Part(
-                    text="Choose your next cooking tool.")])
+                    text=note + "Choose your next cooking tool.")])
                 # A tool round ends the invocation via skip_summarization. A
                 # parallel batch can contain several actions, all individually
                 # checked by the wrappers. Counts persist across invocations.

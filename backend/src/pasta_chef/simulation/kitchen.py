@@ -55,7 +55,7 @@ class Kitchen:
         self.state = KitchenState()
 
     def _record(self, result: dict) -> dict:
-        self.state.events.append(deepcopy(result))
+        self.state.events.append(dict(deepcopy(result), sequence=len(self.state.events) + 1))
         self.state.last_action_result = deepcopy(result)
         return result
 

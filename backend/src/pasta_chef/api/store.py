@@ -6,6 +6,8 @@ from uuid import uuid4
 from fastapi import HTTPException, Request
 
 from pasta_chef.simulation.kitchen import Kitchen
+from pasta_chef.api.schemas import ReplayResponse
+from pasta_chef.api.events import replay_state
 
 
 @dataclass
@@ -13,6 +15,11 @@ class Run:
     kitchen: Kitchen = field(default_factory=Kitchen)
     # Sync routes run in a thread pool: hold this for every read or write of kitchen.
     lock: Lock = field(default_factory=Lock)
+    replay: ReplayResponse | None = None
+    initial_conditions: dict = field(init=False)
+
+    def __post_init__(self):
+        self.initial_conditions = replay_state(self.kitchen.state)
 
 
 class RunStore:

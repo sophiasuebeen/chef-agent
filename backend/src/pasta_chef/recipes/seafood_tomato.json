@@ -1,0 +1,109 @@
+{
+  "id": "seafood_tomato",
+  "name": "Seafood Tomato Pasta",
+  "ingredients": [
+    "spaghetti",
+    "water",
+    "salt",
+    "shrimp",
+    "mussels",
+    "squid",
+    "tomato",
+    "garlic",
+    "olive oil",
+    "parsley"
+  ],
+  "tasks": [
+    {
+      "id": "collect_ingredients",
+      "description": "Collect the recipe ingredients.",
+      "duration": 20,
+      "requires": [],
+      "resources": ["chef"]
+    },
+    {
+      "id": "boil_water",
+      "description": "Heat salted water in the pot.",
+      "duration": 120,
+      "requires": ["collect_ingredients"],
+      "resources": ["pot", "burner"],
+      "holds": {"resources": ["pot", "burner"], "until": "cook_pasta_halfway"}
+    },
+    {
+      "id": "prepare_seafood",
+      "description": "Clean the shrimp, mussels, and squid.",
+      "duration": 60,
+      "requires": ["collect_ingredients"],
+      "resources": ["chef"]
+    },
+    {
+      "id": "crush_garlic",
+      "description": "Crush the garlic.",
+      "duration": 20,
+      "requires": ["collect_ingredients"],
+      "resources": ["chef"]
+    },
+    {
+      "id": "chop_parsley",
+      "description": "Chop the parsley.",
+      "duration": 20,
+      "requires": ["collect_ingredients"],
+      "resources": ["chef"]
+    },
+    {
+      "id": "cook_pasta_halfway",
+      "description": "Add pasta and parboil it before it finishes in the sauce.",
+      "duration": 240,
+      "requires": ["boil_water"],
+      "resources": ["pot", "burner"],
+      "holds": {"resources": ["pot", "burner"], "until": "reserve_water_and_drain"}
+    },
+    {
+      "id": "reserve_water_and_drain",
+      "description": "Reserve pasta water, drain pasta, and remove the pot from the burner.",
+      "duration": 20,
+      "requires": ["cook_pasta_halfway"],
+      "resources": ["chef", "pot"]
+    },
+    {
+      "id": "start_tomato_sauce",
+      "description": "Heat olive oil and garlic in the pan, then add the tomato.",
+      "duration": 40,
+      "requires": ["reserve_water_and_drain", "crush_garlic"],
+      "resources": ["chef", "pan", "burner"],
+      "holds": {"resources": ["pan", "burner"], "until": "simmer_tomato_sauce"}
+    },
+    {
+      "id": "simmer_tomato_sauce",
+      "description": "Simmer the tomato sauce unattended.",
+      "duration": 150,
+      "requires": ["start_tomato_sauce"],
+      "resources": ["pan", "burner"],
+      "holds": {"resources": ["pan", "burner"], "until": "cook_seafood"}
+    },
+    {
+      "id": "cook_seafood",
+      "description": "Add the seafood to the sauce and cook it through.",
+      "duration": 60,
+      "requires": ["simmer_tomato_sauce", "prepare_seafood"],
+      "resources": ["chef", "pan", "burner"],
+      "holds": {"resources": ["pan", "burner"], "until": "finish_pasta"}
+    },
+    {
+      "id": "finish_pasta",
+      "description": "Add pasta to the pan and finish cooking, stirring and adding pasta water.",
+      "duration": 90,
+      "requires": ["cook_seafood"],
+      "resources": ["chef", "pan", "burner"],
+      "holds": {"resources": ["pan"], "until": "finish_off_heat"}
+    },
+    {
+      "id": "finish_off_heat",
+      "description": "Off heat, mix in the parsley and olive oil.",
+      "duration": 20,
+      "requires": ["finish_pasta", "chop_parsley"],
+      "resources": ["chef", "pan"]
+    }
+  ],
+  "completion_tasks": ["finish_off_heat"]
+}

@@ -3,23 +3,7 @@ import argparse
 import json
 
 from pasta_chef.simulation.kitchen import Kitchen
-
-
-def run_scripted(kitchen: Kitchen, order_id: str) -> dict:
-    """Explicit baseline: preparation overlaps background water heating."""
-    def cook(task_id):
-        kitchen.start_task(order_id, task_id)
-        kitchen.advance_to_next_event()
-
-    cook("collect_ingredients")
-    kitchen.start_task(order_id, "boil_water")
-    cook("prepare_mint")
-    cook("crush_garlic")
-    kitchen.advance_to_next_event()
-    for task_id in ("cook_pasta_halfway", "reserve_water_and_drain", "prepare_sauce",
-                    "finish_pasta", "finish_off_heat"):
-        cook(task_id)
-    return kitchen.serve_order(order_id)
+from pasta_chef.simulation.scripted import run_scripted
 
 
 def main() -> int:
