@@ -24,7 +24,9 @@ def run_scripted(kitchen: Kitchen, order_id: str) -> dict:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--mode", choices=("scripted", "agent"), default="scripted")
+    parser.add_argument("--mode", choices=("scripted", "agent", "priority"), default="scripted")
+    parser.add_argument("--rule", help="Priority rule JSON or evolution report (priority mode)")
+    parser.add_argument("--ema", help="Load/save completed-duration EMA JSON (priority mode)")
     parser.add_argument("--menu", default="lemon_pasta")
     parser.add_argument("--time-limit", type=int, default=900)
     parser.add_argument("--model", help="Override CHEF_MODEL, e.g. openai/gpt-4o")
@@ -34,6 +36,18 @@ def main() -> int:
         order = kitchen.add_order(args.menu, args.time_limit)
         if args.mode == "scripted":
             result = run_scripted(kitchen, order.id)
+        elif args.mode == "priority":
+            from pathlib import Path
+            from pasta_chef.simulation.scheduler import DurationEMA, PriorityRule, run_priority_episode
+            rule = PriorityRule()
+            if args.rule:
+                data = json.loads(Path(args.rule).read_text())
+                rule = PriorityRule(**data.get("rule", data))
+            ema_path = Path(args.ema) if args.ema else None
+            ema = DurationEMA(json.loads(ema_path.read_text())) if ema_path and ema_path.exists() else DurationEMA()
+            result = run_priority_episode(kitchen, rule=rule, ema=ema)
+            if ema_path:
+                ema_path.write_text(json.dumps(ema.values, indent=2) + "\n")
         else:
             import asyncio
             from pasta_chef.config import Settings

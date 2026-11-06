@@ -99,6 +99,22 @@ urgency-first sequence served order_2 at 710 and order_1 at 1420, meeting both
 deadlines. This exposes a deadline-prioritization issue in the current agent;
 the test does not change the prompt or simulator rules.
 
+Priority dispatch and offline evolution
+
+Run without live model decisions:
+
+```bash
+PYTHONPATH=backend/src python3 scripts/run_local.py --mode priority
+```
+
+This mode executes a validated priority rule locally and learns duration deviations
+from completed tasks using EMA. It supports exact-time order arrivals and optional
+uncertain durations for offline experiments. An offline evolution loop generates,
+scores, reflects on, and selects candidate rules; `--live` lets Gemini author those
+rules, while service itself makes no API calls. See
+[priority scheduling](docs/priority-scheduling.md) for commands, feature definitions,
+training/held-out separation, and current simulator limitations.
+
 Deadline prompt comparison (minimal evaluation)
 
 `evaluation/scenarios/two_orders.json` fixes one chef, the existing four
