@@ -32,6 +32,13 @@ export interface BeachRestaurantSceneProps {
   uiSafeArea?: UiSafeArea;
   /** Same simulated timestamp and sequence as the replay controls; never wall-clock time. */
   replayFrame?: KitchenFrame;
+  /** Live play: chefs walk in real time. */
+  live?: boolean;
+  speech?: { speaker: string; text: string };
+  /** Something in `children` drives the camera, so the preset rig stands down. */
+  ownCamera?: boolean;
+  onFloorClick?: (x: number, z: number) => void;
+  children?: ReactNode;
 }
 
 const StaticKitchen = memo(Kitchen);
@@ -51,10 +58,11 @@ function findInteractable(hit: Object3D): SceneObjectRef | null {
 interface PointerRootProps {
   onObjectClick?: (event: SceneObjectRef) => void;
   onObjectHover?: (event: SceneObjectRef | null) => void;
+  onFloorClick?: (x: number, z: number) => void;
   children: ReactNode;
 }
 
-function PointerRoot({ onObjectClick, onObjectHover, children }: PointerRootProps) {
+function PointerRoot({ onObjectClick, onObjectHover, onFloorClick, children }: PointerRootProps) {
   const setHoveredId = useSceneStore((state) => state.setHoveredId);
   const lastHover = useRef<string | null>(null);
   const clearPending = useRef(false);
@@ -74,6 +82,7 @@ function PointerRoot({ onObjectClick, onObjectHover, children }: PointerRootProp
         event.stopPropagation();
         const hit = findInteractable(event.object);
         if (hit) onObjectClick?.(hit);
+        onFloorClick?.(event.point.x, event.point.z);
       }}
       onPointerMove={(event: ThreeEvent<PointerEvent>) => {
         event.stopPropagation();
@@ -102,6 +111,11 @@ export function BeachRestaurantScene({
   onObjectHover,
   uiSafeArea,
   replayFrame,
+  live,
+  speech,
+  ownCamera,
+  onFloorClick,
+  children,
 }: BeachRestaurantSceneProps) {
   const setCameraPreset = useSceneStore((state) => state.setCameraPreset);
   const setHighlightedIds = useSceneStore((state) => state.setHighlightedIds);
@@ -118,10 +132,11 @@ export function BeachRestaurantScene({
   return (
     <Canvas shadows="soft" dpr={[1, 1.5]} gl={{ antialias: false, stencil: false }} camera={{ near: 0.2, far: 3200 }}>
       <Lighting shadowTime={replayFrame?.time} shadowSequence={replayFrame?.sequence} shadowChefs={replayFrame?.chefs.length} />
-      <CameraRig uiSafeArea={uiSafeArea} chefFocus={chefFocus} />
-      <PointerRoot onObjectClick={onObjectClick} onObjectHover={onObjectHover}>
+      {!ownCamera && <CameraRig uiSafeArea={uiSafeArea} chefFocus={chefFocus} />}
+      <PointerRoot onObjectClick={onObjectClick} onObjectHover={onObjectHover} onFloorClick={onFloorClick}>
         <StaticKitchen />
-        <KitchenReplay frame={replayFrame} />
+        <KitchenReplay frame={replayFrame} live={live} speech={speech} />
+        {children}
         <StaticDiningHall />
         <StaticTerrace />
         <StaticSeascape />

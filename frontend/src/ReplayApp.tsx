@@ -124,7 +124,7 @@ export function ReplayApp() {
   return <main className="replay-app">
     <header className="page-header"><div><p className="eyebrow">Pasta Chef / kitchen simulator</p>
       <h1>Cook. Replay. Compare.</h1><p>Watch {frame.chefs.length === 1 ? 'one chef' : `${frame.chefs.length} chefs`} work through real kitchen constraints.</p></div>
-      <div className="page-links"><a href="?live">실시간 주방 ↗</a><a href="?scene">Restaurant development view ↗</a></div></header>
+      <div className="page-links"><a href="./">게임으로 ↗</a><a href="?live">실시간 주방 테스트 ↗</a><a href="?scene">Restaurant development view ↗</a></div></header>
     <div className="workspace">
       <aside className="panel setup">
         <OrderPanel busy={busy} chefs={chefCount} onChefsChange={setChefCount} onCook={execute} />

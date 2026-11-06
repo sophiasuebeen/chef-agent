@@ -9,23 +9,28 @@ export interface LiveSessionInfo {
 }
 
 export interface HostAction {
-  type: 'order_accepted' | 'order_rejected';
-  menu: string;
+  type: 'order_accepted' | 'order_rejected' | 'small_talk';
+  menu: string | null;
   quantity: number | null;
   order_ids: string[];
   ready_in_seconds: number | null;
   reason: string | null;
+  decision: 'chat' | 'hand_off' | 'end' | null;
+  chef: string | null;
 }
 
 export interface HostReply {
   reply: string;
   actions: HostAction[];
   failed: boolean;
+  speaker: string;
 }
+
+export const chefLabel = (name: string) => name === 'chef' ? '셰프' : name.replace('chef_', '셰프 ');
 
 export type ChatEntry =
   | { kind: 'customer'; text: string }
-  | { kind: 'host'; text: string; failed: boolean }
+  | { kind: 'host'; text: string; failed: boolean; speaker?: string }
   | { kind: 'action'; action: HostAction };
 
 /** A replay document that keeps growing, so the existing reducer and 3D scene can draw it. */
@@ -60,9 +65,17 @@ export function simulatedNow(startedAtMs: number, nowMs: number, speed: number, 
   return Math.max(fromClock, events.at(-1)?.time ?? 0);
 }
 
+/** Ordinary chat needs no card: the conversation itself shows it. */
+export const visibleActions = (actions: HostAction[]) =>
+  actions.filter((action) => action.type !== 'small_talk' || action.decision !== 'chat');
+
 /** Words for what code recorded, so a card never depends on what the model said. */
 export function describeAction(action: HostAction, menuName: (menu: string) => string): string {
-  const dish = menuName(action.menu);
+  if (action.type === 'small_talk') {
+    return action.decision === 'hand_off' ? `쉬고 있던 ${chefLabel(action.chef ?? 'chef')}가 대화를 이어받았어요`
+      : action.decision === 'end' ? '주방이 바빠 셰프가 조리로 돌아갔어요' : '';
+  }
+  const dish = menuName(action.menu ?? '');
   if (action.type === 'order_accepted') {
     const minutes = Math.max(1, Math.round((action.ready_in_seconds ?? 0) / 60));
     return `주문 접수: ${dish} ${action.quantity}접시 · 약 ${minutes}분 후 완성 예정`;

@@ -10,7 +10,7 @@ export const TASK_STATIONS: Readonly<Record<string, StationType>> = {
   finish_pasta: 'sauce', finish_off_heat: 'plating',
 };
 
-export type ChefMotion = 'idle' | 'collect' | 'chop' | 'crush' | 'stir' | 'drain' | 'plate' | 'serve';
+export type ChefMotion = 'talk' | 'idle' | 'collect' | 'chop' | 'crush' | 'stir' | 'drain' | 'plate' | 'serve';
 const MOTIONS: Record<string, ChefMotion> = {
   collect_ingredients: 'collect', prepare_mint: 'chop', crush_garlic: 'crush',
   prepare_seafood: 'chop', chop_parsley: 'chop',
@@ -114,6 +114,12 @@ export function kitchenFrame(replay: Replay | null, state: ReplayState | null, s
     event?.action === 'task_started' ? TASK_STATIONS[event.task_id] ?? 'prep' : 'pass';
   const chefs = names.map((name, index): ChefActivity => {
     const actions = actionsByChef.get(name) ?? [];
+    if (state.resources[name]?.[0] === 'customer') {
+      const heldAt = events.filter((event) => event.action === 'chef_held' && event.chef === name).at(-1)?.time ?? time;
+      const before = actions.filter((event) => event.time <= heldAt).at(-1);
+      return { name, offset: chefOffset(index, names.length), station: 'pass', fromStation: before ? stationFor(before) : 'pass',
+        motion: 'talk', taskId: null, orderId: null, elapsed: time - heldAt, travel: Math.min(1, (time - heldAt) / 0.8) };
+    }
     const activeChef = state.running_tasks.find((task) => task.resources.includes(name));
     // Service is an instantaneous simulator event and can occur while another
     // order owns the chef. Keep that chef's ongoing work; the pass still shows service.

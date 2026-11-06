@@ -1,6 +1,7 @@
 import { StrictMode } from 'react';
 import { lazy, Suspense } from 'react';
 import { createRoot } from 'react-dom/client';
+import { GameApp } from './GameApp';
 import { LiveApp } from './LiveApp';
 import { ReplayApp } from './ReplayApp';
 
@@ -13,7 +14,8 @@ if (!container) throw new Error('#root element is missing');
 createRoot(container).render(
   <StrictMode>
     <Suspense fallback={<p>Loading restaurant…</p>}>
-      {params.has('scene') ? <SceneApp /> : params.has('live') ? <LiveApp /> : <ReplayApp />}
+      {params.has('scene') ? <SceneApp /> : params.has('live') ? <LiveApp />
+      : params.has('replay') || params.has('run') ? <ReplayApp /> : <GameApp />}
     </Suspense>
   </StrictMode>,
 );

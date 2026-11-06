@@ -1,14 +1,19 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react';
-import { describeAction, type ChatEntry } from '../live';
+import { chefLabel, describeAction, type ChatEntry } from '../live';
 
-export function ChatPanel({ entries, busy, disabled, menuName, onSend }: {
+export function ChatPanel({ entries, busy, disabled, menuName, onSend, draft: sharedDraft, onDraftChange, autoFocus }: {
   entries: ChatEntry[];
   busy: boolean;
   disabled: boolean;
   menuName: (menu: string) => string;
   onSend: (text: string) => void;
+  draft?: string;
+  onDraftChange?: (text: string) => void;
+  autoFocus?: boolean;
 }) {
-  const [draft, setDraft] = useState('');
+  const [ownDraft, setOwnDraft] = useState('');
+  const draft = sharedDraft ?? ownDraft;
+  const setDraft = onDraftChange ?? setOwnDraft;
   const log = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -29,12 +34,13 @@ export function ChatPanel({ entries, busy, disabled, menuName, onSend }: {
       {entries.map((entry, index) => entry.kind === 'action'
         ? <p key={index} className={`chat-action ${entry.action.type}`} data-testid="chat-action">
             {describeAction(entry.action, menuName)}</p>
-        : <p key={index} className={`chat-bubble ${entry.kind} ${entry.kind === 'host' && entry.failed ? 'failed' : ''}`}>{entry.text}</p>)}
+        : <p key={index} className={`chat-bubble ${entry.kind} ${entry.kind === 'host' && entry.failed ? 'failed' : ''}`}>
+            {entry.kind === 'host' && entry.speaker && <span className="chat-speaker">{chefLabel(entry.speaker)}</span>}{entry.text}</p>)}
       {busy && <p className="chat-bubble host pending">셰프가 답하는 중…</p>}
     </div>
     <form className="chat-form" onSubmit={submit}>
       <input aria-label="셰프에게 할 말" placeholder="예: 레몬 파스타 하나 주세요" maxLength={500} value={draft}
-        disabled={disabled} onChange={(event) => setDraft(event.target.value)} />
+        disabled={disabled} autoFocus={autoFocus} onChange={(event) => setDraft(event.target.value)} />
       <button disabled={busy || disabled || !draft.trim()}>보내기</button>
     </form>
   </div>;

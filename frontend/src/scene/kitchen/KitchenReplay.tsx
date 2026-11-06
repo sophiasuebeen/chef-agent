@@ -10,9 +10,12 @@ import { Stove } from './Stove';
 const EMPTY = kitchenFrame(null, null, 0);
 const dishAsset = (menu: string) => menu === 'seafood_tomato' ? 'food.seafoodTomato' : 'food.pasta';
 
-export function KitchenReplay({ frame = EMPTY }: { frame?: KitchenFrame }) {
+export function KitchenReplay({ frame = EMPTY, live = false, speech }: {
+  frame?: KitchenFrame; live?: boolean; speech?: { speaker: string; text: string };
+}) {
   return <group name="replay.kitchen">
-    {frame.chefs.map((chef, index) => <Chef key={chef.name} activity={chef} index={index} time={frame.time} />)}
+    {frame.chefs.map((chef, index) => <Chef key={chef.name} activity={chef} index={index} time={frame.time} live={live}
+      speech={speech?.speaker === chef.name ? speech.text : undefined} />)}
     {stations.filter((station) => station.type !== 'dish').map((station) => {
       const activities = frame.stations.filter((candidate) => candidate.station === station.type);
       const activity = activities[0];

@@ -1,3 +1,4 @@
+import { Html } from '@react-three/drei';
 import { useFrame } from '@react-three/fiber';
 import { useMemo, useRef } from 'react';
 import { BufferAttribute, BufferGeometry, DoubleSide, FrontSide, Group, MeshStandardMaterial } from 'three';
@@ -45,8 +46,14 @@ function armAngles(y: number, z: number) {
 }
 
 /** ~7 heads without the toque, with independent shoulders, elbows, wrists, hips and knees. */
-export function Chef({ activity, index = 0, time }: { activity: ChefActivity; index?: number; time: number }) {
+export function Chef({ activity, index = 0, time, live = false, speech }: {
+  activity: ChefActivity; index?: number; time: number;
+  /** Walk at human speed in real time, since a live kitchen's clock runs fast. */
+  live?: boolean;
+  speech?: string;
+}) {
   const root = useRef<Group>(null), torso = useRef<Group>(null);
+  const placed = useRef(false);
   const shoulders = [useRef<Group>(null), useRef<Group>(null)];
   const elbows = [useRef<Group>(null), useRef<Group>(null)];
   const wrists = [useRef<Group>(null), useRef<Group>(null)];
@@ -56,19 +63,32 @@ export function Chef({ activity, index = 0, time }: { activity: ChefActivity; in
   const materials = useMemo(() => Object.fromEntries(Object.entries({ ...COLORS, navy: TRIM[index] ?? COLORS.navy }).map(([key, color]) =>
     [key, new MeshStandardMaterial({ color, roughness: key === 'hair' ? 0.97 : 0.78, side: key === 'hair' ? DoubleSide : FrontSide })])) as Record<keyof typeof COLORS, MeshStandardMaterial>, [index]);
 
-  useFrame(() => {
+  useFrame(({ clock }, rawDelta) => {
     if (!root.current || !torso.current) return;
     const target = stations.find((s) => s.type === activity.station)!;
     const previous = stations.find((s) => s.type === activity.fromStation)!;
     const progress = activity.travel * activity.travel * (3 - 2 * activity.travel);
-    const walking = progress < 1 && target.type !== previous.type;
-    const phase = activity.elapsed * 2.1;
+    let walking = progress < 1 && target.type !== previous.type;
+    const phase = (live ? clock.elapsedTime : activity.elapsed) * 2.1;
     const [fromX, fromZ] = chefStandPoint(previous, activity.offset);
     const [toX, toZ] = chefStandPoint(target, activity.offset);
-    root.current.position.set(fromX + (toX - fromX) * progress,
-      walking ? Math.abs(Math.sin(phase * 4)) * 0.012 : 0, fromZ + (toZ - fromZ) * progress);
-    root.current.rotation.y = walking ? Math.atan2(toX - fromX, toZ - fromZ)
-      : target.position[2] < target.chefSpot[2] ? Math.PI : 0;
+    if (live) {
+      const position = root.current.position;
+      const dx = toX - position.x, dz = toZ - position.z;
+      const distance = Math.hypot(dx, dz);
+      const reach = Math.min(rawDelta, 0.1) * 2.3;
+      walking = placed.current && distance > 0.02;
+      if (!placed.current || distance <= reach) { position.x = toX; position.z = toZ; }
+      else { position.x += dx / distance * reach; position.z += dz / distance * reach; }
+      placed.current = true;
+      position.y = walking ? Math.abs(Math.sin(phase * 4)) * 0.012 : 0;
+      root.current.rotation.y = walking ? Math.atan2(dx, dz) : target.position[2] < target.chefSpot[2] ? Math.PI : 0;
+    } else {
+      root.current.position.set(fromX + (toX - fromX) * progress,
+        walking ? Math.abs(Math.sin(phase * 4)) * 0.012 : 0, fromZ + (toZ - fromZ) * progress);
+      root.current.rotation.y = walking ? Math.atan2(toX - fromX, toZ - fromZ)
+        : target.position[2] < target.chefSpot[2] ? Math.PI : 0;
+    }
     torso.current.rotation.set(activity.motion === 'idle' || walking ? 0 : 0.045, 0,
       activity.motion === 'idle' ? Math.sin(time * 0.5) * 0.004 : 0);
     for (let side = 0; side < 2; side++) {
@@ -81,6 +101,13 @@ export function Chef({ activity, index = 0, time }: { activity: ChefActivity; in
       shoulder.rotation.set(walking ? -hip.rotation.x : 0, 0, sign * 0.07);
       elbow.rotation.x = -0.1; wrist.rotation.set(0, 0, 0);
       if (activity.motion === 'idle' || walking) continue;
+      if (activity.motion === 'talk') {
+        if (side === 0) continue; // One hand gestures while talking; the other rests.
+        const gesture = armAngles(1.12 + Math.sin(phase * 1.4) * 0.05, 0.3);
+        shoulder.rotation.x = gesture[0]!; elbow.rotation.x = gesture[1]!;
+        wrist.rotation.z = Math.sin(phase * 2) * 0.25;
+        continue;
+      }
       let y = 1.015, z = 0.405;
       const wave = Math.sin(phase * (activity.motion === 'chop' ? 3 : 1.5) + side * Math.PI);
       if (activity.motion === 'chop') y += side === 1 ? Math.max(0, wave) * 0.07 : 0;
@@ -99,6 +126,7 @@ export function Chef({ activity, index = 0, time }: { activity: ChefActivity; in
   });
 
   return <group ref={root} name={`replay.${activity.name}`} userData={{ kind: 'chef', id: activity.name }}>
+    {speech && <Html position={[0, 2.12, 0]} center zIndexRange={[20, 10]}><div className="speech-bubble">{speech}</div></Html>}
     {[0, 1].map((side) => <group key={side} ref={hips[side]} position={[side === 0 ? -0.095 : 0.095, 0.84, 0]}>
       <mesh position={[0, -0.205, 0]} material={materials.pants} castShadow><capsuleGeometry args={[0.069, 0.285, 6, 12]} /></mesh>
       <group ref={knees[side]} position={[0, -0.4, 0]}>

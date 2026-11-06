@@ -1,9 +1,8 @@
-import { Component, lazy, Suspense, useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from 'react';
-import { replayAt, type ReplayEvent } from './replay';
-import { idleResources, isChefResource, kitchenFrame } from './scene/replayPresentation';
+import { Component, lazy, Suspense, useState, type FormEvent, type ReactNode } from 'react';
+import { useLiveKitchen } from './game/useLiveKitchen';
+import { idleResources, isChefResource } from './scene/replayPresentation';
 import type { CameraPresetId } from './data/cameraPresets';
 import { ChatPanel } from './components/ChatPanel';
-import { liveReplay, mergeEvents, simulatedNow, type ChatEntry, type HostReply, type LiveSessionInfo } from './live';
 import './replay.css';
 
 const RestaurantScene = lazy(() => import('./scene/BeachRestaurantScene').then(({ BeachRestaurantScene }) => ({ default: BeachRestaurantScene })));
@@ -14,19 +13,6 @@ class SceneBoundary extends Component<{ children: ReactNode }, { error: boolean 
   render() { return this.state.error ? <p className="scene-unavailable" role="alert">3D rendering is unavailable. Orders and kitchen status remain available below.</p> : this.props.children; }
 }
 
-interface Menu { id: string; name: string; ingredients: string[] }
-
-async function post<T>(path: string, body: unknown): Promise<T> {
-  const response = await fetch(`/api${path}`, {
-    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
-  });
-  if (!response.ok) {
-    const problem = await response.json().catch(() => null);
-    throw new Error(problem?.detail ?? `API request failed (${response.status}).`);
-  }
-  return response.json() as Promise<T>;
-}
-
 const seconds = (value: number) => `${Math.floor(value / 60)}:${Math.floor(value % 60).toString().padStart(2, '0')}`;
 const humanize = (value: string) => value.replaceAll('_', ' ');
 const CAMERAS = [
@@ -35,85 +21,21 @@ const CAMERAS = [
 ] as const;
 
 export function LiveApp() {
-  const [menus, setMenus] = useState<Menu[]>([]);
   const [chefCount, setChefCount] = useState(1);
   const [speed, setSpeed] = useState(10);
-  const [info, setInfo] = useState<LiveSessionInfo | null>(null);
-  const [events, setEvents] = useState<ReplayEvent[]>([]);
-  const [now, setNow] = useState(0);
-  const [entries, setEntries] = useState<ChatEntry[]>([]);
-  const [replying, setReplying] = useState(false);
-  const [opening, setOpening] = useState(false);
-  const [error, setError] = useState('');
-  const [connected, setConnected] = useState(false);
   const [camera, setCamera] = useState<CameraPresetId>('kitchen');
-  const startedAt = useRef(0);
-  const eventsRef = useRef<ReplayEvent[]>([]);
+  const kitchen = useLiveKitchen(chefCount);
+  const { menus, info, now, state, frame, entries, replying, opening, error, connected, menuName, send } = kitchen;
 
-  useEffect(() => {
-    fetch('/api/menus').then((response) => {
-      if (!response.ok) throw new Error('메뉴를 불러오지 못했습니다.');
-      return response.json();
-    }).then(setMenus).catch((problem: Error) => setError(problem.message));
-  }, []);
-
-  useEffect(() => {
-    if (!info) return undefined;
-    // EventSource reconnects by itself and resumes through Last-Event-ID.
-    const source = new EventSource(`/api/sessions/${info.session_id}/events`);
-    source.onopen = () => setConnected(true);
-    source.onerror = () => setConnected(false);
-    source.onmessage = (message) => {
-      eventsRef.current = mergeEvents(eventsRef.current, [JSON.parse(message.data) as ReplayEvent]);
-      setEvents(eventsRef.current);
-    };
-    return () => source.close();
-  }, [info]);
-
-  useEffect(() => {
-    if (!info) return undefined;
-    const timer = window.setInterval(() => {
-      setNow(simulatedNow(startedAt.current, performance.now(), info.speed, eventsRef.current));
-    }, 100);
-    return () => window.clearInterval(timer);
-  }, [info]);
-
-  const replay = useMemo(() => info ? liveReplay(info, events, now) : null, [info, events, now]);
-  const state = useMemo(() => replay ? replayAt(replay, now) : null, [replay, now]);
-  const sequence = useMemo(() => events.filter((event) => event.time <= now).length, [events, now]);
-  const frame = useMemo(() => kitchenFrame(replay, state, sequence, chefCount), [replay, state, sequence, chefCount]);
-  const menuName = (menu: string) => info?.recipes[menu]?.name ?? menus.find((m) => m.id === menu)?.name ?? menu;
-
-  async function open(event: FormEvent) {
+  function open(event: FormEvent) {
     event.preventDefault();
-    setOpening(true); setError('');
-    try {
-      const created = await post<LiveSessionInfo>('/sessions', { speed, chefs: chefCount });
-      startedAt.current = performance.now();
-      eventsRef.current = [];
-      setEvents([]); setEntries([]); setNow(0);
-      setInfo(created);
-    } catch (problem) { setError(problem instanceof Error ? problem.message : '주방을 열지 못했습니다.'); }
-    finally { setOpening(false); }
-  }
-
-  async function send(text: string) {
-    if (!info || replying) return;
-    setEntries((current) => [...current, { kind: 'customer', text }]);
-    setReplying(true); setError('');
-    try {
-      const answer = await post<HostReply>(`/sessions/${info.session_id}/messages`, { text });
-      setEntries((current) => [...current,
-        { kind: 'host', text: answer.reply, failed: answer.failed },
-        ...answer.actions.map((action) => ({ kind: 'action' as const, action }))]);
-    } catch (problem) { setError(problem instanceof Error ? problem.message : '메시지를 보내지 못했습니다.'); }
-    finally { setReplying(false); }
+    void kitchen.open(speed);
   }
 
   return <main className="replay-app">
-    <header className="page-header"><div><p className="eyebrow">Pasta Chef / live kitchen</p>
+    <header className="page-header"><div><p className="eyebrow">Pasta Chef / live kitchen test</p>
       <h1>Order. Chat. Watch it cook.</h1><p>주문은 셰프와의 대화로, 조리는 스케줄러가 맡습니다.</p></div>
-      <a href="./">Replay and compare ↗</a></header>
+      <a href="./">게임으로 ↗</a></header>
     <div className="workspace live-workspace">
       <aside className="panel setup live-setup">
         <section aria-label="메뉴판"><h2>메뉴판</h2>
