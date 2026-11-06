@@ -1,5 +1,7 @@
 """Offline checks for rule dispatch, hidden uncertainty, and population evolution."""
 from copy import deepcopy
+import sys
+from types import ModuleType
 import unittest
 from unittest.mock import patch, MagicMock
 
@@ -153,10 +155,19 @@ class RuleEvolutionTests(unittest.TestCase):
     def test_llm_adapter_generates_and_reflects_with_mocked_provider(self):
         client = MagicMock()
         client.models.generate_content.return_value.text = '{"name":"edd","expression":"-due"}'
-        with patch('pasta_chef.config.require_google_credentials'), patch('google.genai.Client', return_value=client):
+        # Replace the modules themselves: patching a dotted Client path would
+        # import the optional real SDK before installing the mock.
+        google = ModuleType('google')
+        genai = ModuleType('google.genai')
+        genai.Client = MagicMock(return_value=client)
+        google.genai = genai
+        with patch('pasta_chef.config.require_google_credentials'), patch.dict(
+            sys.modules, {'google': google, 'google.genai': genai}
+        ):
             proposer = LLMProposer('mock-model')
             self.assertEqual(proposer(dict(phase='generate'))['expression'], '-due')
             client.models.generate_content.return_value.text = '{"lesson":"measured result"}'
             self.assertEqual(proposer(dict(phase='reflect'))['lesson'], 'measured result')
             proposer.close()
         client.close.assert_called_once()
+        genai.Client.assert_called_once_with(http_options={'timeout': 60000})
