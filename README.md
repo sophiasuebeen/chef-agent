@@ -57,7 +57,24 @@ The terminal prints the successful simulator action log and final observation,
 including model/tool counts. Network or model failures never invoke a scripted
 fallback. No credentials are printed.
 
-Offline verification (no provider requests):
+Live requests send only the newest observation, ask OpenAI models for one tool
+call per decision, and retry 429/500/502/503/504 up to five times with backoff (an
+exhausted quota is not retried). Waiting counts against `CHEF_TIMEOUT_SECONDS`,
+which now defaults to 300. Each result's `decision_log` records every model
+call with its tokens, every tool attempt with any rejection, and every retry.
+
+`evaluation.run` and `run_local.py --mode agent` print progress to stderr as it
+happens, with a heartbeat every 10 seconds naming what is being waited on (model
+response or retry backoff). Heartbeats stopping means the process is blocked.
+
+Offline verification (no provider requests). For a readable report grouped by
+area, run every suite with:
+
+```bash
+backend/.venv/bin/python scripts/run_tests.py
+```
+
+Or use plain unittest:
 
 ```bash
 PYTHONPATH=backend/src python3 -m unittest discover -s tests -v
@@ -173,3 +190,10 @@ Termination codes distinguish `completed`, `simulated_time_limit`,
 comparison was saved; the rows' run_success fields describe cooking outcomes.
 Three repetitions per prompt are exploratory and cannot establish a confirmed
 performance improvement.
+
+Live comparison executed on 2026-11-06 with `openai/gpt-4o`, three episodes per
+prompt: [results and limitations](evaluation/results/20261106T054509Z-f088d8e0/summary.md).
+The original completed one episode with 470 seconds of tardiness; the other
+five episodes stopped with provider `RateLimitError`. The deadline prompt
+served the urgent order on time in its first episode before interruption,
+but this incomplete sample does not establish an improvement.

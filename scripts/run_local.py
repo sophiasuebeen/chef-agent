@@ -56,6 +56,8 @@ def main() -> int:
                 from dataclasses import replace
                 settings = replace(settings, model=args.model)
             from pasta_chef.runtime.controller import run_agent_episode
+            from pasta_chef.runtime.progress import enable_progress_logs
+            enable_progress_logs()
             result = asyncio.run(run_agent_episode(kitchen, settings))
         for event in kitchen.state.events:
             print(json.dumps(event))

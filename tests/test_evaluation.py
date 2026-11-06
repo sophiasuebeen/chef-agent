@@ -10,8 +10,8 @@ from unittest.mock import patch
 
 from evaluation.metrics import calculate_metrics
 from evaluation.run import (
-    initialize_kitchen, load_scenario,
-    run_baseline, run_comparison,
+    comparison_table, initialize_kitchen, load_scenario,
+    run_baseline, run_comparison, terminal_table,
 )
 from pasta_chef.agents.chef import DEADLINE_OBJECTIVE, get_chef_instruction
 from pasta_chef.config import Settings
@@ -139,6 +139,44 @@ class EvaluationMetricTests(unittest.TestCase):
                          self.kitchen.state.orders["order_1"].completed_tasks)
 
 
+class EvaluationTableTests(unittest.TestCase):
+    def setUp(self):
+        metrics = {
+            "all_served": True, "all_on_time": False, "unserved_orders": 0,
+            "late_orders": 1, "total_tardiness": 470, "finished_at": 1370,
+            "model_calls": 18, "tool_calls": 45, "input_tokens": 40000,
+            "rejected_tool_calls": 3, "provider_retries": 1,
+            "termination_reason": "completed", "run_success": False,
+        }
+        stopped = dict(metrics, all_served=False, unserved_orders=2, late_orders=0,
+                       total_tardiness=0, finished_at=0, model_calls=1, tool_calls=0,
+                       termination_reason="api_error")
+        self.reports = [
+            {"variant": "original", "repetition": 1, "metrics": metrics},
+            {"variant": "deadline", "repetition": 12, "metrics": stopped},
+        ]
+
+    def test_terminal_table_columns_line_up_across_rows(self):
+        lines = terminal_table(self.reports).splitlines()
+        rule = next(i for i, text in enumerate(lines) if text.startswith("---"))
+        table = lines[rule - 1:]
+        self.assertEqual(len(table), 4)
+        self.assertNotIn("|", "\n".join(table))
+        # Each column starts where the rule says, whatever a row's cell width is.
+        starts = [i for i, c in enumerate(lines[rule]) if c == "-" and lines[rule][i - 1] == " "]
+        for text in table:
+            for start in starts:
+                self.assertEqual(text[start - 2:start], "  ", text)
+
+    def test_terminal_table_reports_same_values_as_markdown(self):
+        rows = terminal_table(self.reports).splitlines()[-2:]
+        self.assertEqual(rows[0].split(), ["original", "1", "yes", "no", "0", "1", "470",
+                                           "1370", "18/45", "40000", "3", "1", "completed", "no"])
+        self.assertEqual(rows[1].split(), ["deadline", "12", "no", "no", "2", "0", "0",
+                                           "0", "1/0", "40000", "3", "1", "api_error", "no"])
+        self.assertIn("| original | 1 | True | False |", comparison_table(self.reports))
+
+
 class EvaluationRunnerTests(unittest.IsolatedAsyncioTestCase):
     async def test_three_runs_per_prompt_use_same_conditions_and_fresh_kitchens(self):
         calls = []
@@ -155,8 +193,13 @@ class EvaluationRunnerTests(unittest.IsolatedAsyncioTestCase):
                             timeout_seconds=30)
         with TemporaryDirectory() as directory:
             output = Path(directory) / "comparison"
-            reports = await run_comparison(load_scenario(), settings, output,
-                                           live=True, episode_runner=offline_episode)
+            with self.assertLogs("pasta_chef.progress", "INFO") as logs:
+                reports = await run_comparison(load_scenario(), settings, output,
+                                               live=True, episode_runner=offline_episode)
+            announced = "\n".join(logs.output)
+            self.assertIn("Results directory:", announced)
+            self.assertIn("Episode 1/6 started: original-1", announced)
+            self.assertIn("Saved deadline-3: stop=model_call_limit", announced)
             self.assertEqual(len(reports), 7)
             self.assertEqual(len(list(output.glob("*.json"))), 7)
             self.assertEqual(len({id(call[0]) for call in calls}), 6)

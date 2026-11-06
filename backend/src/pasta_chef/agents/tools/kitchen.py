@@ -1,6 +1,5 @@
 """Per-episode adapters: rules remain in simulation/kitchen.py."""
-from time import monotonic
-
+from pasta_chef.runtime.progress import EpisodeProgress
 from pasta_chef.simulation.observation import build_observation
 from pasta_chef.simulation.recipes import load_recipe
 
@@ -17,20 +16,72 @@ class KitchenTools:
         self.settings = settings
         self.tool_calls = 0
         self.model_calls = 0
-        self.deadline = monotonic() + settings.timeout_seconds
-
-    def _check_wall_clock(self):
-        if monotonic() >= self.deadline:
-            raise EpisodeLimit("Wall-clock time limit reached.", "wall_clock_limit")
+        self.input_tokens = 0
+        self.output_tokens = 0
+        self.rejected_tool_calls = 0
+        self.provider_retries = 0
+        self.decision_log = []
+        self.progress = EpisodeProgress(settings.timeout_seconds)
 
     def before_model(self):
-        self._check_wall_clock()
         if self.model_calls >= self.settings.max_model_calls:
             raise EpisodeLimit("Model call limit reached.", "model_call_limit")
         self.model_calls += 1
+        self.progress.request_sent(self.model_calls, self.kitchen.state.time)
+
+    def log_model_response(self, response):
+        usage = response.usage_metadata
+        input_tokens = usage.prompt_token_count if usage else None
+        output_tokens = usage.candidates_token_count if usage else None
+        self.input_tokens += input_tokens or 0
+        self.output_tokens += output_tokens or 0
+        parts = response.content.parts if response.content and response.content.parts else []
+        calls = [{"tool": p.function_call.name, "args": dict(p.function_call.args or {})}
+                 for p in parts if p.function_call]
+        text = " ".join(p.text for p in parts if p.text)[:200] or None
+        self.decision_log.append({
+            "type": "model_call", "model_call": self.model_calls, "time": self.kitchen.state.time,
+            "input_tokens": input_tokens, "output_tokens": output_tokens,
+            "calls": calls, "text": text,
+        })
+        self.progress.response_received(input_tokens, output_tokens, calls, text)
+
+    def log_tool_call(self, tool, args, response, source="chef"):
+        ok = response.get("ok", True)
+        self.rejected_tool_calls += not ok
+        error = response.get("error")
+        self.decision_log.append({
+            "type": "tool_call", "source": source, "model_call": self.model_calls,
+            "time": self.kitchen.state.time, "tool": tool, "args": dict(args), "ok": ok,
+            "error": error["message"] if isinstance(error, dict) else None,
+        })
+        entry = self.decision_log[-1]
+        self.progress.tool_finished(source, tool, entry["args"], ok, entry["error"], entry["time"])
+
+    def log_retry(self, status_code, delay, details=None):
+        """Allowlisted details only: provider error text can contain request details."""
+        self.provider_retries += 1
+        self.decision_log.append({
+            "type": "provider_retry", "model_call": self.model_calls,
+            "status_code": status_code, "delay_seconds": delay, "details": details or {},
+        })
+        self.progress.backoff_started(status_code, delay, self.provider_retries, details or {})
+
+    def log_provider_failure(self, status_code, retries, details):
+        self.decision_log.append({
+            "type": "provider_failure", "model_call": self.model_calls,
+            "status_code": status_code, "retries": retries, "details": details,
+        })
+        self.progress.provider_failed(status_code, retries, details)
+
+    def usage(self) -> dict:
+        return {
+            "input_tokens": self.input_tokens, "output_tokens": self.output_tokens,
+            "rejected_tool_calls": self.rejected_tool_calls,
+            "provider_retries": self.provider_retries,
+        }
 
     def _call(self, operation, *args):
-        self._check_wall_clock()
         if self.tool_calls >= self.settings.max_tool_calls:
             raise EpisodeLimit("Tool call limit reached.", "tool_call_limit")
         self.tool_calls += 1

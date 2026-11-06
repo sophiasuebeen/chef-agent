@@ -12,6 +12,7 @@ from uuid import uuid4
 from evaluation.metrics import calculate_metrics
 from pasta_chef.agents.chef import get_chef_instruction
 from pasta_chef.config import Settings
+from pasta_chef.runtime.progress import enable_progress_logs, logger as progress
 from pasta_chef.simulation.kitchen import Kitchen
 from scripts.run_local import run_scripted
 
@@ -91,6 +92,42 @@ def comparison_table(reports) -> str:
     return "\n".join(lines) + "\n"
 
 
+def terminal_table(reports) -> str:
+    """Aligned plain-text view of the same rows; comparison.md stays markdown."""
+    headers = ("variant", "run", "served", "on_time", "unserved", "late", "tardy_s",
+               "end_s", "model/tool", "in_tokens", "rejects", "retries", "stop_reason", "success")
+    numeric = {"run", "unserved", "late", "tardy_s", "end_s", "model/tool",
+               "in_tokens", "rejects", "retries"}
+    yes_no = lambda value: "yes" if value else "no"
+    rows = []
+    for report in reports:
+        m = report["metrics"]
+        rows.append((
+            report["variant"], report["repetition"], yes_no(m["all_served"]),
+            yes_no(m["all_on_time"]), m["unserved_orders"], m["late_orders"],
+            m["total_tardiness"], m["finished_at"], f"{m['model_calls']}/{m['tool_calls']}",
+            m["input_tokens"], m["rejected_tool_calls"], m["provider_retries"],
+            m["termination_reason"], yes_no(m["run_success"]),
+        ))
+    rows = [tuple(str(cell) for cell in row) for row in rows]
+    widths = [max(len(row[i]) for row in [headers, *rows]) for i in range(len(headers))]
+
+    def line(cells):
+        return "  ".join(
+            cell.rjust(width) if header in numeric else cell.ljust(width)
+            for cell, width, header in zip(cells, widths, headers)
+        ).rstrip()
+
+    return "\n".join([
+        "Two-order exploratory comparison (small sample; not a confirmed improvement)",
+        "A stopped run with zero tardiness is not a success. end_s includes stopped runs.",
+        "",
+        line(headers),
+        "  ".join("-" * width for width in widths),
+        *(line(row) for row in rows),
+    ]) + "\n"
+
+
 async def run_comparison(scenario, settings, output_dir, *, repetitions=3, live=False,
                          episode_runner=None):
     """Delegate every agent episode to controller; no agent action loop here.
@@ -104,9 +141,15 @@ async def run_comparison(scenario, settings, output_dir, *, repetitions=3, live=
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=False)
     reports = []
+    progress.info("Results directory: %s", output_dir.resolve())
 
     def save(kitchen, result, variant, repetition):
         report = build_report(scenario, settings, kitchen, result, variant, repetition)
+        m = report["metrics"]
+        progress.info(
+            "Saved %s-%s: stop=%s served=%s on_time=%s model/tool=%s/%s in_tokens=%s retries=%s",
+            variant, repetition, m["termination_reason"], m["all_served"], m["all_on_time"],
+            m["model_calls"], m["tool_calls"], m["input_tokens"], m["provider_retries"])
         (output_dir / f"{variant}-{repetition}.json").write_text(
             json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
         reports.append(report)
@@ -119,8 +162,12 @@ async def run_comparison(scenario, settings, output_dir, *, repetitions=3, live=
             from pasta_chef.runtime.controller import run_agent_episode
             episode_runner = run_agent_episode
         # Alternate variants each repetition; all other conditions are identical.
+        total, number = repetitions * 2, 0
         for repetition in range(1, repetitions + 1):
             for variant in ("original", "deadline"):
+                number += 1
+                progress.info("Episode %s/%s started: %s-%s (timeout %.0fs)", number, total,
+                              variant, repetition, settings.timeout_seconds)
                 kitchen = initialize_kitchen(scenario)
                 try:
                     result = await episode_runner(kitchen, settings, prompt_variant=variant)
@@ -143,6 +190,7 @@ def main():
     parser.add_argument("--repetitions", type=int, default=3)
     parser.add_argument("--output", type=Path)
     args = parser.parse_args()
+    enable_progress_logs()
     settings = Settings.from_env() if args.live else Settings()
     if args.model:
         settings = replace(settings, model=args.model)
@@ -152,7 +200,7 @@ def main():
         load_scenario(args.scenario), settings, output,
         repetitions=args.repetitions, live=args.live,
     ))
-    print(comparison_table(reports))
+    print(terminal_table(reports))
     print(f"Results: {output.resolve()}")
     # Completed evaluation may include failed episodes; run_success in each row
     # is the outcome metric, distinct from this command's successful execution.
