@@ -7,12 +7,22 @@ from `pasta_chef.simulation.observation`. All times are integer simulated second
 
 ## State
 
-`Kitchen()` creates `kitchen.state: KitchenState`: time 0, orders {},
+`Kitchen(*, duration_sampler=None)` creates `kitchen.state: KitchenState`: time 0, orders {},
 next_order_number 1, running_tasks [], and resources chef/burner/pot/pan all None.
 Resource owners are `(order_id, task_id)` tuples. Each order owns a separate
 completed_tasks list. `state.events` is the full successful action log;
 `state.last_action_result` is the most recent action result (initially None).
-`kitchen.reset()` replaces state with a fresh KitchenState.
+`kitchen.reset()` replaces state with a fresh KitchenState; it retains the
+configured duration_sampler.
+
+Without a sampler, tasks use the recipe duration. An optional callable
+`duration_sampler(order, task)` receives deep copies of the order and validated
+recipe task at task start. It must return a positive integer (excluding bool).
+That duration determines finishes_at without changing recipe data. Invalid
+samples raise ValueError before kitchen state is mutated; sampler exceptions
+also propagate before mutation. Observations and action logs expose actual
+finish times; priority-rule features use planned durations and completed history
+instead (see [priority scheduling](priority-scheduling.md)).
 
 `Order` fields: id, menu, created_at, deadline, status (pending/cooking/served),
 completed_tasks, served_at (initially None), on_time (initially None).
@@ -22,7 +32,7 @@ completed_tasks, served_at (initially None), on_time (initially None).
 
 ### Kitchen.add_order(menu: str, time_limit: int = 900) -> Order
 
-Normalize menu with strip/lower; initially only lemon_pasta is supported.
+Normalize menu with strip/lower; lemon_pasta and seafood_tomato are supported.
 Positive integer time_limit (excluding bool) is required. Return the stored
 Order with id order_N, created_at=current time, deadline=time+time_limit,
 status pending, and completed_tasks []. Increment N only on success.
@@ -42,7 +52,8 @@ Uses the same validation and exceptions as start_task.
 
 Requires an existing unserved order, known task, task neither running nor
 completed, all requires completed by this order, and all resources available.
-Reserve resources, append RunningTask with finishes_at=time+duration, and mark
+Use the recipe duration or validated sampled duration, reserve resources, append
+RunningTask with finishes_at=time+duration, and mark
 order cooking. Does not advance time. Return exactly:
 
 ```json
@@ -54,9 +65,9 @@ Unknown order/task raises KeyError. Served order, duplicate task, missing
 dependency, unavailable resource, or invalid recipe duration/resources raises
 ValueError. Recipe durations must be positive integers and resources known.
 
-### Kitchen.advance_to_next_event() -> dict
+### Kitchen.advance_to_next_event(*, until: int | None = None) -> dict
 
-With running tasks, advance to the earliest finishes_at, complete ALL tasks at
+With `until=None` and running tasks, advance to the earliest finishes_at, complete ALL tasks at
 that timestamp in running_tasks insertion order, append their IDs to their
 own orders, release only resources owned by each finishing task except those
 named in the task's `holds`, and remove those running tasks. Held resources stay
@@ -68,9 +79,22 @@ it lists and frees the rest. Return exactly (completed can have multiple entries
  "completed": [{"order_id": "order_1", "task_id": "collect_ingredients"}]}
 ```
 
-With no running tasks return
+With no running tasks and `until=None`, return
 `{"ok": true, "action": "no_op", "time": CURRENT_TIME, "completed": []}`.
 No-op changes nothing, including the action log and last result.
+
+An explicit `until` must be an integer (excluding bool) at or after current time;
+invalid values raise ValueError before mutation. If it is earlier than the next
+completion, or there are no running tasks, advance to `until` and record
+`{"ok": true, "action": "time_advanced", "time": UNTIL}` without completing tasks
+or releasing resources. If that boundary equals current time, return the no-op
+result instead. If the next completion is at or before `until`, process that
+completion batch normally and stop there. Thus `until` is an upper bound for
+this call, not a request to process every event through that timestamp.
+
+The priority scheduler uses this boundary for exact-time arrivals and episode
+limits. Calling without arguments retains the original behavior. ADK's tool
+wrapper still exposes the no-argument operation.
 
 ### Kitchen.serve_order(order_id: str) -> dict
 
@@ -104,10 +128,15 @@ Return a detached JSON-serializable snapshot; never mutate state. Keys:
 
 Every rejected simulator operation raises before mutation: all state, counters,
 resource owners, events and last_action_result remain unchanged. Successful
-mutating operations append a detached copy of their result to events and store
-it in last_action_result. The add_order event is
+mutating operations append a detached copy of their result to events, adding a
+`sequence` field starting at 1 and increasing by one. This preserves action order
+when timestamps are equal. Action return values and `last_action_result` retain
+their original fields; sequence is log metadata. The add_order event is
 `{ok: true, action: 'order_accepted', time, order_id, menu, deadline}`.
 No task completion automatically serves a dish or cancels a late order.
+
+The HTTP execution/replay schema is documented in the
+[API guide](../backend/src/pasta_chef/api/README.md#execution-and-replay-v10).
 
 ADK wrappers catch KeyError/ValueError and return
 `{ok: false, error: {type: EXCEPTION_CLASS_NAME, message: TEXT}, observation: SNAPSHOT}`.
@@ -124,7 +153,10 @@ and wall-clock episode duration. Limits stop before the next mutation/call;
 limits and provider failures produce a failed episode, never fabricated success.
 Only a simulator order with status served means success. When no startable or
 servable action exists and tasks are running, the controller can advance time
-without a model call. All other action selection belongs to ChefAgent.
+without a model call. With `Settings.skip_forced_moves` (default off; evaluation
+turns it on) the controller also serves finished orders and starts the only
+startable task when one order remains. All other action selection belongs to
+ChefAgent.
 
 ## Acceptance example
 
