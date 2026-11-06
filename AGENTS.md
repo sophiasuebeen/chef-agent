@@ -74,7 +74,7 @@ backend/
       head_chef.py                  # Later: multiple-chef coordination
     runtime/
       controller.py
-      sessions.py
+      sessions.py                   # Live sessions: real time to simulated time, event stream
     api/                            # Later
       routes/orders.py
       schemas.py
@@ -150,7 +150,7 @@ Initial resource names: `chef`, `burner`, `pot`, `pan`. Chef availability is der
 5. `advance_to_next_event()` advances to the earliest task completion and completes ALL tasks at that timestamp.
 6. On completion, update the owning order, release only resources owned by that task except those named in its `holds`, and remove the running task.
 7. With no running tasks, advancing returns an explicit no-op result; never call `min()` on an empty collection or invent progress.
-8. Simulated time is independent of wall-clock time and LLM latency. Do not use real sleeps to represent cooking.
+8. Simulated time is independent of wall-clock time and LLM latency. Do not use real sleeps to represent cooking. Only `runtime/sessions.py` maps real time to simulated time, for live sessions.
 9. Serving must validate recipe completion and prevent duplicate service. Deadline compliance is recorded; automatic cancellation on deadline is not currently required.
 
 Equipment is reserved for each task's duration and released at task completion, unless the recipe task declares `holds: {resources, until}`. Held equipment stays reserved for that order until the named task starts, so cooked pasta keeps the pot and sauce keeps the pan. Some small actions are grouped into recipe tasks. The initial model tracks task progress rather than detailed ingredient transformations or persistent vessel contents. Do not claim it already models pot contents, contamination, cooling, or overcooking. Explain any extension of these mechanics before implementing it.

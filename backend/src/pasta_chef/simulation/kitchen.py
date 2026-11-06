@@ -6,13 +6,16 @@ from .recipes import get_task, load_recipe
 
 def _held_for(state: KitchenState, order_id: str, task_id: str) -> set[str]:
     """Equipment this order kept from an earlier step, waiting for this task."""
+    owned = {resource: owner[1] for resource, owner in state.resources.items()
+             if owner and owner[0] == order_id}
+    if not owned:  # Validation runs constantly, so skip reading the recipe when possible.
+        return set()
     recipe = load_recipe(state.orders[order_id].menu)
     held = set()
-    for resource, owner in state.resources.items():
-        if owner and owner[0] == order_id:
-            hold = get_task(recipe, owner[1]).get("holds")
-            if hold and hold["until"] == task_id and resource in hold["resources"]:
-                held.add(resource)
+    for resource, owner_task in owned.items():
+        hold = get_task(recipe, owner_task).get("holds")
+        if hold and hold["until"] == task_id and resource in hold["resources"]:
+            held.add(resource)
     return held
 
 

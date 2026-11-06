@@ -46,3 +46,25 @@ Offline tests (no model calls or credentials):
 ```bash
 PYTHONPATH=backend/src backend/.venv/bin/python -m unittest discover -s backend/tests -v
 ```
+
+## Live sessions
+
+`/runs` cooks everything in one blocking request. `/sessions` runs in real time instead:
+orders can arrive while cooking, and the priority scheduler dispatches them on its own.
+
+| Method and path | Body | Success | Errors |
+| --- | --- | --- | --- |
+| `POST /sessions` | optional `{"speed": 10}` | `201` `{"session_id": "...", "speed": 10}` | `422` |
+| `POST /sessions/{id}/orders` | `{"menu": "lemon_pasta", "time_limit": 900, "quantity": 1}` | `201` `{"time": 200, "orders": [...]}` | `400`, `404`, `422` |
+| `GET /sessions/{id}/state` | none | `200` time, idle, all orders, resources, running tasks | `404` |
+| `GET /sessions/{id}/events?after=0` | none | `200` server-sent simulator events | `404`, `422` |
+
+`speed` is simulated seconds per real second, from above 0 to 1000. `quantity` is 1 to 20;
+plates in one request are ranked together. Each event's `id` and `sequence` is its 1-based
+position. Reconnect with `?after=` or `Last-Event-ID` to skip events already seen. The stream
+stays open while the session exists, so clients close it themselves.
+
+The kitchen advances whenever a session is read or written, so results do not depend on how
+often clients poll. Given the same arrival times, a session produces the same events as
+`run_priority_episode`. Sessions are in-memory, are never removed until restart, and need one
+server process.
