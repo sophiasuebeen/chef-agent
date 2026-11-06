@@ -47,6 +47,21 @@ test('replaying API events exactly matches full backend state for both policies 
   }
 });
 
+test('a chef held for a customer is shown as busy until released', () => {
+  const empty = { time: 0, orders: [], resources: { chef: null }, running_tasks: [] };
+  const base = { ok: true, chef: 'chef' };
+  const replay = {
+    initial_conditions: empty, recipes: {}, result: { finished_at: 100 },
+    events: [
+      { ...base, sequence: 1, time: 10, action: 'chef_held' },
+      { ...base, sequence: 2, time: 70, action: 'chef_released' },
+    ],
+  };
+  assert.equal(replayAt(replay, 5).resources.chef, null);
+  assert.deepEqual(replayAt(replay, 40).resources.chef, ['customer', 'chat']);
+  assert.equal(replayAt(replay, 80).resources.chef, null);
+});
+
 test('sequence seeking distinguishes actions at the same simulated timestamp', () => {
   const replay = fixtures[0];
   assert.deepEqual(replayAt(replay, 0, 0), replay.initial_conditions);

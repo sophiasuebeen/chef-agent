@@ -130,13 +130,20 @@ orders can arrive while cooking, and the priority scheduler dispatches them on i
 | --- | --- | --- | --- |
 | `POST /sessions` | optional `{"speed": 10}` | `201` `{"session_id": "...", "speed": 10}` | `422` |
 | `POST /sessions/{id}/orders` | `{"menu": "lemon_pasta", "time_limit": 900, "quantity": 1}` | `201` `{"time": 200, "orders": [...]}` | `400`, `404`, `422` |
-| `GET /sessions/{id}/state` | none | `200` time, idle, all orders, resources, running tasks | `404` |
+| `POST /sessions/{id}/chef-hold` | `{"seconds": 60}` | `200` hold status | `400`, `404`, `422` |
+| `DELETE /sessions/{id}/chef-hold` | none | `200` hold status | `404` |
+| `GET /sessions/{id}/state` | none | `200` time, idle, chef hold, all orders, resources, running tasks | `404` |
 | `GET /sessions/{id}/events?after=0` | none | `200` server-sent simulator events | `404`, `422` |
 
 `speed` is simulated seconds per real second, from above 0 to 1000. `quantity` is 1 to 20;
 plates in one request are ranked together. Each event's `id` and `sequence` is its 1-based
 position. Reconnect with `?after=` or `Last-Event-ID` to skip events already seen. The stream
 stays open while the session exists, so clients close it themselves.
+
+A chef hold reserves the chef for a customer, in simulated seconds from 1 to 3600. Running work
+is never interrupted, so the hold starts when the chef is next free, before any new hand work.
+Background cooking and deadlines continue, and a dish waiting for the chef keeps its equipment.
+Another request during a hold can only extend it. Hold status is `none`, `waiting` or `active`.
 
 The kitchen advances whenever a session is read or written, so results do not depend on how
 often clients poll. Given the same arrival times, a session produces the same events as

@@ -32,6 +32,8 @@ export type ReplayEvent = EventBase & (
   | { action: 'tasks_completed'; completed: { order_id: string; task_id: string }[] }
   | { action: 'order_served'; order_id: string; on_time: boolean }
   | { action: 'time_advanced' }
+  | { action: 'chef_held'; chef: string }
+  | { action: 'chef_released'; chef: string }
 );
 
 export interface Replay {
@@ -102,6 +104,10 @@ export function replayAt(replay: Replay, time: number, sequence = Infinity): Rep
         }
         state.running_tasks = state.running_tasks.filter((t) => t !== task);
       }
+    } else if (event.action === 'chef_held') {
+      state.resources[event.chef] = ['customer', 'chat'];
+    } else if (event.action === 'chef_released') {
+      state.resources[event.chef] = null;
     } else if (event.action === 'order_served') {
       const order = state.orders.find((o) => o.id === event.order_id)!;
       order.status = 'served';

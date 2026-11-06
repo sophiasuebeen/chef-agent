@@ -1,6 +1,6 @@
 """Live kitchen routes. All async, so they share one event loop; see runtime/sessions.py."""
 from json import JSONDecodeError
-from typing import Annotated
+from typing import Annotated, Literal
 
 from fastapi import APIRouter, Body, Depends, Header, HTTPException, Query, Request, status
 from fastapi.responses import StreamingResponse
@@ -34,9 +34,21 @@ class SessionOrdersCreated(BaseModel):
     orders: list[OrderResponse]
 
 
+class ChefHoldCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    seconds: Annotated[StrictInt, Field(gt=0, le=3600, description="Simulated seconds.")]
+
+
+class ChefHoldState(BaseModel):
+    status: Literal["none", "waiting", "active"]
+    seconds: int | None
+    until: int | None
+
+
 class SessionState(BaseModel):
     time: int
     idle: bool
+    chef_hold: ChefHoldState
     orders: list[OrderResponse]
     resources: dict[str, list[str] | None]
     running_tasks: list[RunningTaskResponse]
@@ -73,6 +85,20 @@ async def create_orders(body: SessionOrderCreate, session: Session) -> dict:
     state = session.snapshot()
     ids = {order.id for order in accepted}
     return dict(time=state["time"], orders=[o for o in state["orders"] if o["id"] in ids])
+
+
+@router.post("/sessions/{session_id}/chef-hold", response_model=ChefHoldState,
+             responses=error_responses(400, 404, 422))
+async def hold_chef(body: ChefHoldCreate, session: Session) -> dict:
+    """Reserve the chef for a customer, starting when the chef is next free."""
+    return session.hold_chef(body.seconds)
+
+
+@router.delete("/sessions/{session_id}/chef-hold", response_model=ChefHoldState,
+               responses=error_responses(404, 422))
+async def release_chef(session: Session) -> dict:
+    """Send the chef back to cooking now."""
+    return session.release_chef()
 
 
 @router.get("/sessions/{session_id}/state", response_model=SessionState, responses=error_responses(404, 422))

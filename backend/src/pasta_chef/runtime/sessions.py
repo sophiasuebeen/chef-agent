@@ -23,10 +23,24 @@ class LiveKitchen:
         self.kitchen = Kitchen(duration_sampler=duration_sampler)
         self.dispatcher = Dispatcher(self.kitchen, rule=rule, ema=ema)
         self.now = 0
+        self._hold_wanted = None  # Seconds, once the chef is free.
+        self._hold_until = None
+
+    def _update_hold(self):
+        """End a finished hold, and take the chef before new hand work can."""
+        state = self.kitchen.state
+        if self._hold_until is not None and state.time >= self._hold_until:
+            self.kitchen.release_chef()
+            self._hold_until = None
+        if self._hold_wanted is not None and state.resources["chef"] is None:
+            self.kitchen.hold_chef()
+            self._hold_until = state.time + self._hold_wanted
+            self._hold_wanted = None
 
     def _dispatch(self):
         while True:
             self.dispatcher.learn()
+            self._update_hold()
             if not (self.dispatcher.serve_one() or self.dispatcher.start_one()):
                 return
 
@@ -35,10 +49,25 @@ class LiveKitchen:
         undispatched so orders arriving at that moment are considered with them."""
         self._dispatch()
         state = self.kitchen.state
-        while state.running_tasks and min(t.finishes_at for t in state.running_tasks) <= target:
-            self.kitchen.advance_to_next_event()
+        while True:
+            finish = min((t.finishes_at for t in state.running_tasks), default=None)
+            hold_end = self._hold_until if self._hold_until is not None and self._hold_until > state.time else None
+            if finish is not None and finish <= target and (hold_end is None or finish <= hold_end):
+                self.kitchen.advance_to_next_event()
+            elif hold_end is not None and hold_end <= target:
+                self.kitchen.advance_to_next_event(until=hold_end)
+            else:
+                return
             if settle or state.time < target:
                 self._dispatch()
+
+    def _move_to(self, at):
+        """Bring the kitchen to exactly this moment, for something happening at it."""
+        if type(at) is not int or at < self.now:
+            raise ValueError("Actions must happen at or after the current time.")
+        self._complete_through(at, settle=False)
+        if self.kitchen.state.time < at:
+            self.kitchen.advance_to_next_event(until=at)
 
     def advance_to(self, target):
         """Logs nothing unless something happens, however often it is called."""
@@ -49,20 +78,49 @@ class LiveKitchen:
     def add_orders(self, at, orders):
         """Accept (menu, time_limit) pairs together at one moment; all or none."""
         if type(at) is not int or at < self.now:
-            raise ValueError("Orders must arrive at or after the current time.")
+            raise ValueError("Actions must happen at or after the current time.")
         for menu, time_limit in orders:
             if not isinstance(menu, str):
                 raise ValueError("Menu must be a string.")
             load_recipe(menu.strip().lower())
             if type(time_limit) is not int or time_limit <= 0:
                 raise ValueError("Time limit must be a positive integer.")
-        self._complete_through(at, settle=False)
-        if self.kitchen.state.time < at:
-            self.kitchen.advance_to_next_event(until=at)
+        self._move_to(at)
         accepted = [self.kitchen.add_order(menu, time_limit) for menu, time_limit in orders]
         self._dispatch()
         self.now = at
         return accepted
+
+    def hold_chef(self, at, seconds):
+        """Keep the chef for a customer. Running work is never interrupted: the hold starts
+        when the chef is next free. A request during a hold can only extend it."""
+        if type(seconds) is not int or seconds <= 0:
+            raise ValueError("Hold seconds must be a positive integer.")
+        self._move_to(at)
+        if self._hold_until is not None:
+            self._hold_until = max(self._hold_until, at + seconds)
+        else:
+            self._hold_wanted = max(self._hold_wanted or 0, seconds)
+        self._dispatch()
+        self.now = at
+
+    def release_chef(self, at):
+        """Stop holding now, or drop a hold still waiting. Harmless with no hold."""
+        self._move_to(at)
+        self._hold_wanted = None
+        if self._hold_until is not None:
+            self.kitchen.release_chef()
+            self._hold_until = None
+        self._dispatch()
+        self.now = at
+
+    @property
+    def chef_hold(self):
+        if self._hold_until is not None:
+            return dict(status="active", seconds=self._hold_until - self.now, until=self._hold_until)
+        if self._hold_wanted is not None:
+            return dict(status="waiting", seconds=self._hold_wanted, until=None)
+        return dict(status="none", seconds=None, until=None)
 
 
 class LiveSession:
@@ -81,12 +139,21 @@ class LiveSession:
     def add_orders(self, orders):
         return self.live.add_orders(self.sync(), orders)
 
+    def hold_chef(self, seconds):
+        self.live.hold_chef(self.sync(), seconds)
+        return self.live.chef_hold
+
+    def release_chef(self):
+        self.live.release_chef(self.sync())
+        return self.live.chef_hold
+
     def snapshot(self):
         now = self.sync()
         state = self.live.kitchen.state
         return dict(
             time=now,
             idle=not state.running_tasks,
+            chef_hold=self.live.chef_hold,
             orders=[asdict(order) for order in state.orders.values()],
             resources={name: list(owner) if owner else None for name, owner in state.resources.items()},
             running_tasks=[dict(asdict(task), remaining_time=task.finishes_at - now)

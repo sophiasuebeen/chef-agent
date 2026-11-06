@@ -73,7 +73,8 @@ class ReplayEvent(BaseModel):
     model_config = ConfigDict(extra="allow")
     sequence: int
     time: int
-    action: Literal["order_accepted", "task_started", "tasks_completed", "time_advanced", "order_served"]
+    action: Literal["order_accepted", "task_started", "tasks_completed", "time_advanced", "order_served",
+                    "chef_held", "chef_released"]
     ok: bool
 
 

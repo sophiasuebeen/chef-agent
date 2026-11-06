@@ -1,5 +1,6 @@
 """Live kitchen sessions on an injected clock: no real waiting, provider calls or credentials."""
 import asyncio
+from copy import deepcopy
 from dataclasses import asdict
 import hashlib
 import json
@@ -11,6 +12,7 @@ from fastapi.testclient import TestClient
 from pasta_chef.main import create_app
 from pasta_chef.runtime.sessions import LiveKitchen, LiveSession, SessionStore, event_stream
 from pasta_chef.simulation.kitchen import Kitchen
+from pasta_chef.simulation.observation import build_observation
 from pasta_chef.simulation.scheduler import run_priority_episode
 
 
@@ -120,6 +122,152 @@ class LiveKitchenTests(unittest.TestCase):
                 live.add_orders(at, orders)
             self.assertEqual((list(live.kitchen.state.events), live.now), before)
             self.assertEqual(len(live.kitchen.state.orders), 1)
+
+
+class KitchenChefHoldTests(unittest.TestCase):
+    def setUp(self):
+        self.kitchen = Kitchen()
+        self.order = self.kitchen.add_order("lemon_pasta", 900)
+
+    def test_held_chef_blocks_hand_work_but_not_background_cooking(self):
+        self.kitchen.start_task(self.order.id, "collect_ingredients")
+        self.kitchen.advance_to_next_event()
+        self.kitchen.hold_chef()
+        self.assertEqual(self.kitchen.state.events[-1]["action"], "chef_held")
+        observation = build_observation(self.kitchen.state)
+        self.assertFalse(observation["chef_available"])
+        self.assertEqual(observation["available_tasks"][self.order.id], ["boil_water"])
+        before = deepcopy(self.kitchen.state)
+        with self.assertRaisesRegex(ValueError, "Resource unavailable: chef"):
+            self.kitchen.start_task(self.order.id, "prepare_mint")
+        self.assertEqual(self.kitchen.state, before)
+        self.kitchen.start_task(self.order.id, "boil_water")
+        self.kitchen.advance_to_next_event()
+        self.assertIn("boil_water", self.order.completed_tasks)
+        self.kitchen.release_chef()
+        self.kitchen.start_task(self.order.id, "prepare_mint")
+
+    def test_hold_and_release_are_validated_and_change_nothing_when_rejected(self):
+        with self.assertRaisesRegex(ValueError, "not held"):
+            self.kitchen.release_chef()
+        self.kitchen.start_task(self.order.id, "collect_ingredients")
+        before = deepcopy(self.kitchen.state)
+        with self.assertRaisesRegex(ValueError, "Resource unavailable: chef"):
+            self.kitchen.hold_chef()
+        with self.assertRaisesRegex(ValueError, "not held"):
+            self.kitchen.release_chef()
+        self.assertEqual(self.kitchen.state, before)
+
+
+class LiveChefHoldTests(unittest.TestCase):
+    def starts(self, live):
+        return {(e["order_id"], e["task_id"]): e["time"] for e in live.kitchen.state.events
+                if e["action"] == "task_started"}
+
+    def actions(self, live, *names):
+        return [(e["action"], e["time"]) for e in live.kitchen.state.events if e["action"] in names]
+
+    def order_then_hold(self, seconds, at=25):
+        live = LiveKitchen()
+        self.order = live.add_orders(0, [("lemon_pasta", 900)])[0]
+        live.hold_chef(at, seconds)
+        return live
+
+    def test_running_hand_work_finishes_first_then_the_chef_talks(self):
+        live = self.order_then_hold(60)  # prepare_mint runs from 20 to 40.
+        self.assertEqual(live.chef_hold, dict(status="waiting", seconds=60, until=None))
+        live.advance_to(50)
+        self.assertEqual(live.chef_hold, dict(status="active", seconds=50, until=100))
+        self.assertEqual(self.actions(live, "chef_held"), [("chef_held", 40)])
+        live.advance_to(5000)
+        self.assertEqual(self.actions(live, "chef_released"), [("chef_released", 100)])
+        starts = self.starts(live)
+        self.assertEqual(starts[(self.order.id, "crush_garlic")], 100)
+        self.assertEqual(live.chef_hold["status"], "none")
+
+    def test_background_cooking_continues_and_a_short_chat_costs_nothing(self):
+        live = self.order_then_hold(60)
+        live.advance_to(5000)
+        starts = self.starts(live)
+        self.assertEqual(starts[(self.order.id, "cook_pasta_halfway")], 140)
+        self.assertEqual(self.order.served_at, 710)
+
+    def test_a_long_chat_delays_the_dish_while_it_keeps_its_equipment(self):
+        live = self.order_then_hold(400)  # Chef held from 40 to 440; pasta is done at 380.
+        live.advance_to(400)
+        resources = live.kitchen.state.resources
+        self.assertEqual(resources["chef"], ("customer", "chat"))
+        self.assertEqual(resources["pot"], (self.order.id, "cook_pasta_halfway"))
+        self.assertEqual(resources["burner"], (self.order.id, "cook_pasta_halfway"))
+        live.advance_to(5000)
+        # At 440 garlic and draining are both ready; the sauce needs both, so order is free.
+        self.assertEqual(self.starts(live)[(self.order.id, "crush_garlic")], 440)
+        self.assertEqual(self.starts(live)[(self.order.id, "reserve_water_and_drain")], 460)
+        self.assertEqual(self.order.served_at, 790)
+
+    def test_a_request_during_a_hold_only_extends_it(self):
+        live = self.order_then_hold(60)
+        live.advance_to(50)
+        live.hold_chef(50, 200)
+        self.assertEqual(live.chef_hold["until"], 250)
+        live.hold_chef(60, 10)
+        self.assertEqual(live.chef_hold["until"], 250)
+        live.advance_to(5000)
+        self.assertEqual(self.actions(live, "chef_held", "chef_released"),
+                         [("chef_held", 40), ("chef_released", 250)])
+
+    def test_release_goes_back_to_cooking_or_drops_a_waiting_hold(self):
+        live = self.order_then_hold(600)
+        live.advance_to(60)
+        live.release_chef(60)
+        self.assertEqual(self.starts(live)[(self.order.id, "crush_garlic")], 60)
+        self.assertEqual(live.chef_hold["status"], "none")
+        waiting = self.order_then_hold(600)
+        waiting.release_chef(30)
+        waiting.advance_to(5000)
+        self.assertEqual(self.actions(waiting, "chef_held"), [])
+        waiting.release_chef(5000)  # Harmless with no hold.
+        self.assertEqual(self.order.served_at, 710)
+
+    def test_an_order_arriving_as_a_hold_ends_starts_right_away(self):
+        live = LiveKitchen()
+        live.hold_chef(0, 100)
+        self.assertEqual(self.actions(live, "chef_held"), [("chef_held", 0)])
+        order = live.add_orders(100, [("lemon_pasta", 900)])[0]
+        self.assertEqual(self.actions(live, "chef_released"), [("chef_released", 100)])
+        self.assertEqual(self.starts(live)[(order.id, "collect_ingredients")], 100)
+
+    def test_an_order_during_a_hold_waits_for_hand_work(self):
+        live = LiveKitchen()
+        live.hold_chef(0, 100)
+        order = live.add_orders(30, [("lemon_pasta", 900)])[0]
+        self.assertEqual(order.status, "pending")
+        live.advance_to(99)
+        self.assertEqual(self.starts(live), {})
+        live.advance_to(5000)
+        self.assertEqual(order.served_at, 810)
+
+    def test_how_often_time_is_read_does_not_change_a_held_kitchen(self):
+        def run(step):
+            live = LiveKitchen()
+            live.add_orders(0, [("lemon_pasta", 900)] * 2)
+            live.hold_chef(25, 300)
+            for moment in range(26, 3000, step):
+                live.advance_to(moment)
+            live.advance_to(5000)
+            return live.kitchen.state.events
+        self.assertEqual(run(1), run(1000))
+
+    def test_invalid_holds_change_nothing(self):
+        live = self.order_then_hold(60)
+        live.advance_to(50)
+        before = list(live.kitchen.state.events)
+        for at, seconds in ((60, 0), (60, -5), (60, 1.5), (60, True), (40, 10), (60.5, 10)):
+            with self.subTest(at=at, seconds=seconds), self.assertRaises(ValueError):
+                live.hold_chef(at, seconds)
+            self.assertEqual(live.kitchen.state.events, before)
+        with self.assertRaises(ValueError):
+            live.release_chef(40)
 
 
 class LiveSessionTests(unittest.TestCase):
@@ -239,6 +387,32 @@ class SessionApiTests(unittest.TestCase):
         state = self.client.get(f"/sessions/{session_id}/state").json()
         self.assertTrue(state["idle"])
         self.assertEqual([o["status"] for o in state["orders"]], ["served"] * 3)
+
+    def test_hold_the_chef_while_cooking_then_release(self):
+        session_id = self.new_session(speed=10)
+        self.order(session_id)
+        self.clock.now += 2.5  # Simulated 25: prepare_mint is running.
+        path = f"/sessions/{session_id}/chef-hold"
+        response = self.client.post(path, json=dict(seconds=120))
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json(), dict(status="waiting", seconds=120, until=None))
+        self.clock.now += 2.5  # Simulated 50: holding since 40.
+        state = self.client.get(f"/sessions/{session_id}/state").json()
+        self.assertEqual(state["chef_hold"], dict(status="active", seconds=110, until=160))
+        self.assertEqual(state["resources"]["chef"], ["customer", "chat"])
+        self.assertEqual([t["task_id"] for t in state["running_tasks"]], ["boil_water"])
+        self.assertEqual(self.client.delete(path).json()["status"], "none")
+        state = self.client.get(f"/sessions/{session_id}/state").json()
+        self.assertEqual(state["resources"]["chef"], [state["running_tasks"][-1]["order_id"], "crush_garlic"])
+
+    def test_invalid_holds(self):
+        session_id = self.new_session()
+        path = f"/sessions/{session_id}/chef-hold"
+        for body in (dict(seconds=0), dict(seconds=3601), dict(seconds=1.5), dict(), dict(seconds=1, extra=1)):
+            with self.subTest(body):
+                self.assertEqual(self.client.post(path, json=body).status_code, 422)
+        self.assertEqual(self.client.post("/sessions/missing/chef-hold", json=dict(seconds=1)).status_code, 404)
+        self.assertEqual(self.client.delete("/sessions/missing/chef-hold").status_code, 404)
 
     def test_session_body_is_optional_and_speed_is_reported(self):
         response = self.client.post("/sessions")

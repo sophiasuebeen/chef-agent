@@ -165,3 +165,11 @@ at 20; advance to 40 (mint done, water still running); start crush_garlic and
 advance to 60, then advance to 140. Complete cook_pasta_halfway (380),
 reserve_water_and_drain (400), prepare_sauce (440), finish_pasta (680),
 finish_off_heat (710), then serve. All resources must be released.
+
+### Kitchen.hold_chef() and Kitchen.release_chef()
+
+`hold_chef()` reserves a free chef for a customer: the `chef` resource's owner becomes
+`("customer", "chat")`, which rejects hand work until `release_chef()`, and logs `chef_held`.
+It raises `ValueError` if the chef is busy. `release_chef()` logs `chef_released` and raises
+`ValueError` if the chef is not held. Time, background tasks and deadlines are unaffected.
+Choosing when to hold belongs to the caller; see `runtime/sessions.py`.

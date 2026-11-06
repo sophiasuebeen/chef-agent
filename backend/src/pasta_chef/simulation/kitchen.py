@@ -4,6 +4,10 @@ from .models import KitchenState, Order, RunningTask
 from .recipes import get_task, load_recipe
 
 
+# Resource owner while the chef talks with a customer. Order IDs never take this form.
+CUSTOMER_CHAT = ("customer", "chat")
+
+
 def _held_for(state: KitchenState, order_id: str, task_id: str) -> set[str]:
     """Equipment this order kept from an earlier step, waiting for this task."""
     owned = {resource: owner[1] for resource, owner in state.resources.items()
@@ -144,3 +148,16 @@ class Kitchen:
         order.on_time = self.state.time <= order.deadline
         return self._record(dict(ok=True, action="order_served", time=self.state.time,
                                  order_id=order_id, on_time=order.on_time))
+
+    def hold_chef(self) -> dict:
+        """Reserve a free chef for a customer. Background cooking and deadlines keep running."""
+        if self.state.resources["chef"] is not None:
+            raise ValueError("Resource unavailable: chef")
+        self.state.resources["chef"] = CUSTOMER_CHAT
+        return self._record(dict(ok=True, action="chef_held", time=self.state.time, chef="chef"))
+
+    def release_chef(self) -> dict:
+        if self.state.resources["chef"] != CUSTOMER_CHAT:
+            raise ValueError("Chef is not held for a customer.")
+        self.state.resources["chef"] = None
+        return self._record(dict(ok=True, action="chef_released", time=self.state.time, chef="chef"))
