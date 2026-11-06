@@ -10,7 +10,7 @@ class Settings:
     max_model_calls: int = 40
     max_tool_calls: int = 80
     max_simulated_time: int = 1200
-    timeout_seconds: float = 120
+    timeout_seconds: float = 300
 
     def __post_init__(self):
         if not self.model.strip():
@@ -38,7 +38,7 @@ class Settings:
             max_model_calls=int(os.getenv("CHEF_MAX_MODEL_CALLS", "40")),
             max_tool_calls=int(os.getenv("CHEF_MAX_TOOL_CALLS", "80")),
             max_simulated_time=int(os.getenv("CHEF_MAX_SIMULATED_TIME", "1200")),
-            timeout_seconds=float(os.getenv("CHEF_TIMEOUT_SECONDS", "120")),
+            timeout_seconds=float(os.getenv("CHEF_TIMEOUT_SECONDS", "300")),
         )
 
 

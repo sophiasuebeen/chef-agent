@@ -6,9 +6,10 @@ from pasta_chef.simulation.recipes import load_recipe
 
 
 DEADLINE_OBJECTIVE = (
-    "모든 주문의 마감 준수를 우선한다. "
-    "공유 자원 배정 전 마감과 남은 작업을 고려한다. "
-    "모두 지킬 수 없다면 지연 주문 수, 그다음 총 지연 시간을 최소화한다."
+    "Prioritize meeting the deadline of every order. "
+    "Before assigning shared resources, consider each order's deadline and remaining tasks. "
+    "If not all deadlines can be met, minimize the number of late orders first, "
+    "then the total lateness."
 )
 
 
@@ -33,9 +34,31 @@ def get_chef_instruction(prompt_variant: str = "original") -> str:
     return original
 
 
+def without_stale_observations(contents):
+    """Copy history without tool-result observations; only the newest one is true.
+
+    Keeps each result's ok/error so the chef can still see what it tried.
+    """
+    def trim(part):
+        result = part.function_response
+        if not (result and isinstance(result.response, dict) and "observation" in result.response):
+            return part
+        kept = {key: value for key, value in result.response.items() if key != "observation"}
+        return part.model_copy(update={"function_response": result.model_copy(update={"response": kept})})
+
+    return [content.model_copy(update={"parts": [trim(part) for part in content.parts or []]})
+            for content in contents]
+
+
 def create_chef_agent(tools, model, *, prompt_variant="original"):
     from google.adk.agents import Agent
     from google.genai import types
+
+    def with_retries(name, inner):
+        from pasta_chef.agents.retrying_llm import RetryingLlm
+        return RetryingLlm(model=name, inner=inner, on_retry=tools.log_retry,
+                           on_resend=tools.progress.request_resent,
+                           on_give_up=tools.log_provider_failure)
 
     if isinstance(model, str) and model.startswith(("openai/", "gpt-")):
         import os
@@ -45,20 +68,30 @@ def create_chef_agent(tools, model, *, prompt_variant="original"):
         import litellm
         litellm.telemetry = False
         litellm.suppress_debug_info = True
-        model = LiteLlm(
-            model=model if model.startswith("openai/") else f"openai/{model}",
-            num_retries=0,
-        )
+        name = model if model.startswith("openai/") else f"openai/{model}"
+        # One action per decision, so each choice sees a fresh observation.
+        # Retries live in RetryingLlm so they are bounded and logged.
+        model = with_retries(name, LiteLlm(model=name, num_retries=0, parallel_tool_calls=False))
+    elif isinstance(model, str):
+        from google.adk.models.google_llm import Gemini
+        model = with_retries(model, Gemini(model=model))
 
     def before_model(callback_context, llm_request):
         tools.before_model()
         # State is authoritative outside ADK sessions and refreshed on EVERY call.
+        # Past actions stay in history, but only this newest observation is sent.
+        llm_request.contents = without_stale_observations(llm_request.contents)
         llm_request.contents.append(types.Content(role="user", parts=[types.Part(
             text="Current kitchen observation: " + json.dumps(build_observation(tools.kitchen.state))
         )]))
         return None
 
+    def after_model(callback_context, llm_response):
+        tools.log_model_response(llm_response)
+        return None
+
     def after_tool(tool, args, tool_context, tool_response):
+        tools.log_tool_call(tool.name, args, tool_response)
         # Return control after the tool round. ADK can execute multiple calls in a
         # single round; each call still passes through the shared episode budget.
         tool_context.actions.skip_summarization = True
@@ -70,6 +103,7 @@ def create_chef_agent(tools, model, *, prompt_variant="original"):
         instruction=get_chef_instruction(prompt_variant),
         tools=tools.functions(),
         before_model_callback=before_model,
+        after_model_callback=after_model,
         after_tool_callback=after_tool,
         generate_content_config=types.GenerateContentConfig(
             temperature=0,

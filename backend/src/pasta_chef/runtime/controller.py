@@ -1,6 +1,5 @@
 """Bounded terminal episode. The kitchen, not ADK session state, owns progress."""
 import asyncio
-import json
 
 from pasta_chef.agents.tools.kitchen import EpisodeLimit, KitchenTools
 from pasta_chef.config import ConfigurationError
@@ -41,14 +40,16 @@ async def run_agent_episode(kitchen, settings, *, model=None, prompt_variant="or
                 if not any(observation["available_tasks"].values()) and not can_serve:
                     if not kitchen.state.running_tasks:
                         raise EpisodeLimit("Kitchen cannot make progress.", "no_progress")
-                    tools.advance_to_next_event()
+                    tools.log_tool_call("advance_to_next_event", {}, tools.advance_to_next_event(),
+                                        source="controller")
                     continue
                 if tools.model_calls >= settings.max_model_calls:
                     raise EpisodeLimit("Model call limit reached.", "model_call_limit")
                 if tools.tool_calls >= settings.max_tool_calls:
                     raise EpisodeLimit("Tool call limit reached.", "tool_call_limit")
+                # The before_model callback appends the current observation.
                 message = types.Content(role="user", parts=[types.Part(
-                    text="Choose your next cooking tool. " + json.dumps(observation))])
+                    text="Choose your next cooking tool.")])
                 # A tool round ends the invocation via skip_summarization. A
                 # parallel batch can contain several actions, all individually
                 # checked by the wrappers. Counts persist across invocations.
@@ -60,6 +61,7 @@ async def run_agent_episode(kitchen, settings, *, model=None, prompt_variant="or
                         raise RuntimeError(f"Model response failed ({event.error_code}).")
         return {"ok": True, "status": "served", "termination_reason": "completed"}
 
+    heartbeat = asyncio.create_task(tools.progress.run_heartbeat())
     try:
         result = await asyncio.wait_for(episode(), timeout=settings.timeout_seconds)
     except asyncio.TimeoutError:
@@ -79,5 +81,10 @@ async def run_agent_episode(kitchen, settings, *, model=None, prompt_variant="or
         # out of the terminal while still identifying the failure class.
         result = {"ok": False, "status": "failed", "error": type(error).__name__,
                   "termination_reason": "api_error"}
+    finally:
+        heartbeat.cancel()
+        await asyncio.gather(heartbeat, return_exceptions=True)
+    tools.progress.finished(result["termination_reason"], result.get("error"))
     return dict(result, model_calls=tools.model_calls, tool_calls=tools.tool_calls,
+                **tools.usage(), decision_log=tools.decision_log,
                 observation=build_observation(kitchen.state))
