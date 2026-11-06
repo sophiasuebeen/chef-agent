@@ -136,8 +136,16 @@ orders can arrive while cooking, and the priority scheduler dispatches them on i
 | `POST /sessions/{id}/orders` | `{"menu": "lemon_pasta", "time_limit": 900, "quantity": 1}` | `201` `{"time": 200, "orders": [...]}` | `400`, `404`, `422` |
 | `POST /sessions/{id}/chef-hold` | `{"seconds": 60}` | `200` hold status | `400`, `404`, `422` |
 | `DELETE /sessions/{id}/chef-hold` | none | `200` hold status | `404` |
+| `POST /sessions/{id}/messages` | `{"text": "레몬 파스타 하나요"}` | `200` `{"reply": "...", "actions": [...], "failed": false}` | `400`, `404`, `409` still answering, `422`, `429` too many messages |
 | `GET /sessions/{id}/state` | none | `200` time, idle, chef hold, all orders, resources, running tasks | `404` |
 | `GET /sessions/{id}/events?after=0` | none | `200` server-sent simulator events | `404`, `422` |
+
+Messages go to the host LLM and can incur provider charges. Its tools are `place_order` and
+`get_order_status`, and code validates each call against the live session. `actions` lists what
+actually happened, built by code rather than taken from the model's reply. If the model fails,
+the response is still `200` with a fixed reply and `failed: true`, and cooking is unaffected.
+`POST /sessions` also returns `initial_state` and `recipes`, so clients can rebuild state from
+events. Check the host with `python -m evaluation.host_eval`, which makes live provider calls.
 
 `speed` is simulated seconds per real second, from above 0 to 1000. `chefs` is as for runs.
 `quantity` is 1 to 20;

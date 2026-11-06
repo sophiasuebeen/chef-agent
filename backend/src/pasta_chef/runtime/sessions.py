@@ -6,6 +6,7 @@ the current time, so idle sessions cost nothing. Callers must stay on one event 
 and not await between catching up and using the result, which makes each call atomic.
 """
 import asyncio
+from copy import deepcopy
 from dataclasses import asdict
 import json
 import time
@@ -131,6 +132,8 @@ class LiveSession:
         self.live = LiveKitchen(**kitchen_options)
         self._clock = clock
         self._started_at = clock()
+        self.host = None
+        self.host_busy = False
 
     def sync(self):
         self.live.advance_to(int((self._clock() - self._started_at) * self.speed))
@@ -138,6 +141,21 @@ class LiveSession:
 
     def add_orders(self, orders):
         return self.live.add_orders(self.sync(), orders)
+
+    def ready_in_seconds(self, order_ids):
+        """Simulated seconds until these orders are served, if nothing else changes.
+
+        Rehearses the rest of the service on a copy, using the same rules the kitchen will."""
+        now = self.sync()
+        rehearsal = deepcopy(self.live)
+        state = rehearsal.kitchen.state
+        horizon = now
+        while any(state.orders[order_id].served_at is None for order_id in order_ids):
+            horizon += 3600
+            if horizon - now > 10 ** 7:
+                raise RuntimeError("Orders would not finish.")
+            rehearsal.advance_to(horizon)
+        return max(state.orders[order_id].served_at for order_id in order_ids) - now
 
     def hold_chef(self, seconds):
         self.live.hold_chef(self.sync(), seconds)

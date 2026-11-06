@@ -1,12 +1,14 @@
 """Live kitchen routes. All async, so they share one event loop; see runtime/sessions.py."""
 from json import JSONDecodeError
-from typing import Annotated, Literal
+from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, Body, Depends, Header, HTTPException, Query, Request, status
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel, ConfigDict, Field, StrictInt
+from pydantic import BaseModel, ConfigDict, Field, StrictInt, StrictStr, field_validator
 
+from pasta_chef.agents.host import FALLBACK_REPLY, MessageLimitReached, available_menus, create_host
 from pasta_chef.api.errors import error_responses, safe_text
+from pasta_chef.config import ConfigurationError
 from pasta_chef.api.schemas import ChefCount, OrderCreate, OrderResponse, RunningTaskResponse
 from pasta_chef.runtime.sessions import LiveSession, event_stream
 
@@ -20,9 +22,47 @@ class SessionCreate(BaseModel):
     chefs: ChefCount = 1
 
 
+class InitialKitchen(BaseModel):
+    """A session's starting point, so clients can rebuild state from its events."""
+    time: int
+    orders: list[OrderResponse]
+    resources: dict[str, list[str] | None]
+    running_tasks: list[RunningTaskResponse]
+
+
 class SessionCreated(BaseModel):
     session_id: str
     speed: float
+    initial_state: InitialKitchen
+    recipes: dict[str, dict[str, Any]]
+
+
+class MessageCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    text: Annotated[StrictStr, Field(min_length=1, max_length=500)]
+
+    @field_validator("text")
+    @classmethod
+    def not_blank(cls, text):
+        if not text.strip():
+            raise ValueError("Message must not be blank.")
+        return text
+
+
+class HostAction(BaseModel):
+    """What actually happened, reported by code rather than by the model."""
+    type: Literal["order_accepted", "order_rejected"]
+    menu: str
+    quantity: int | None
+    order_ids: list[str] = []
+    ready_in_seconds: int | None = None
+    reason: str | None = None
+
+
+class MessageReply(BaseModel):
+    reply: str
+    actions: list[HostAction]
+    failed: bool
 
 
 class SessionOrderCreate(OrderCreate):
@@ -70,7 +110,10 @@ Session = Annotated[LiveSession, Depends(get_session)]
 async def create_session(request: Request,
                          body: Annotated[SessionCreate, Body()] = SessionCreate()) -> dict:
     """Start a kitchen whose clock runs from now."""
-    return dict(session_id=request.app.state.sessions.create(body.speed, body.chefs), speed=body.speed)
+    session_id = request.app.state.sessions.create(body.speed, body.chefs)
+    resources = request.app.state.sessions.get(session_id).snapshot()["resources"]
+    return dict(session_id=session_id, speed=body.speed, recipes=available_menus(),
+                initial_state=dict(time=0, orders=[], resources=resources, running_tasks=[]))
 
 
 @router.post("/sessions/{session_id}/orders", status_code=status.HTTP_201_CREATED,
@@ -100,6 +143,27 @@ async def hold_chef(body: ChefHoldCreate, session: Session) -> dict:
 async def release_chef(session: Session) -> dict:
     """Send the chef back to cooking now."""
     return session.release_chef()
+
+
+@router.post("/sessions/{session_id}/messages", response_model=MessageReply,
+             responses=error_responses(400, 404, 409, 422, 429))
+async def send_message(body: MessageCreate, session: Session, request: Request) -> dict:
+    """Talk with the host, which can place orders. Calls the configured LLM provider."""
+    if session.host_busy:
+        raise HTTPException(status_code=409, detail="The host is still answering.")
+    session.host_busy = True
+    try:
+        if session.host is None:
+            factory = getattr(request.app.state, "host_factory", create_host)
+            try:
+                session.host = factory(session)
+            except ConfigurationError:
+                return dict(reply=FALLBACK_REPLY, actions=[], failed=True)
+        return await session.host.reply(body.text)
+    except MessageLimitReached:
+        raise HTTPException(status_code=429, detail="Too many messages in this session.") from None
+    finally:
+        session.host_busy = False
 
 
 @router.get("/sessions/{session_id}/state", response_model=SessionState, responses=error_responses(404, 422))

@@ -4,7 +4,7 @@
 
 Build a simulated outdoor pasta restaurant on a beach. An LLM chef operates a kitchen with recipe dependencies, limited equipment, preparation tasks, background cooking, and order deadlines.
 
-The eventual experience includes a 3D restaurant, ordering, watching the chef, asking about cooking, and leaving feedback. Human play and human–agent cooperation are future possibilities, not current requirements.
+An optimizer-style scheduler cooks; the LLM handles only customer conversation. The eventual experience includes a 3D restaurant, ordering, watching the chef, asking about cooking, and leaving feedback. Human play and human–agent cooperation are future possibilities, not current requirements.
 
 ## Working with the developer
 
@@ -85,7 +85,7 @@ backend/
       retrying_llm.py                # Bounded provider retries
       tools/kitchen.py              # Simulator adapters, budgets and logs
       callbacks.py                  # Placeholder
-      host.py                       # Placeholder
+      host.py                       # Customer-facing LLM host: conversation and validated order tools
       head_chef.py                  # Placeholder
     runtime/
       controller.py                 # Bounded ADK episode loop

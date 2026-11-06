@@ -60,17 +60,12 @@ def without_stale_observations(contents):
             for content in contents]
 
 
-def create_chef_agent(tools, model, *, prompt_variant="original"):
-    from google.adk.agents import Agent
-    from google.genai import types
-
-    def with_retries(name, inner):
-        from pasta_chef.agents.retrying_llm import RetryingLlm
-        return RetryingLlm(model=name, inner=inner, on_retry=tools.log_retry,
-                           on_resend=tools.progress.request_resent,
-                           on_give_up=tools.log_provider_failure)
-
-    if isinstance(model, str) and model.startswith(("openai/", "gpt-")):
+def resolve_model(model, **retry_options):
+    """Turn a configured model name into a retried client. Injected models pass through."""
+    if not isinstance(model, str):
+        return model
+    from pasta_chef.agents.retrying_llm import RetryingLlm
+    if model.startswith(("openai/", "gpt-")):
         import os
         # Use packaged metadata instead of fetching a cost map at startup.
         os.environ.setdefault("LITELLM_LOCAL_MODEL_COST_MAP", "True")
@@ -81,10 +76,19 @@ def create_chef_agent(tools, model, *, prompt_variant="original"):
         name = model if model.startswith("openai/") else f"openai/{model}"
         # One action per decision, so each choice sees a fresh observation.
         # Retries live in RetryingLlm so they are bounded and logged.
-        model = with_retries(name, LiteLlm(model=name, num_retries=0, parallel_tool_calls=False))
-    elif isinstance(model, str):
+        inner = LiteLlm(model=name, num_retries=0, parallel_tool_calls=False)
+    else:
         from google.adk.models.google_llm import Gemini
-        model = with_retries(model, Gemini(model=model))
+        name, inner = model, Gemini(model=model)
+    return RetryingLlm(model=name, inner=inner, **retry_options)
+
+
+def create_chef_agent(tools, model, *, prompt_variant="original"):
+    from google.adk.agents import Agent
+    from google.genai import types
+
+    model = resolve_model(model, on_retry=tools.log_retry, on_resend=tools.progress.request_resent,
+                          on_give_up=tools.log_provider_failure)
 
     def before_model(callback_context, llm_request):
         tools.before_model()
