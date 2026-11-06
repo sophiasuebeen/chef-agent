@@ -1,0 +1,451 @@
+{
+  "variant": "scripted",
+  "repetition": 1,
+  "scenario": {
+    "id": "two_orders",
+    "chef_count": 1,
+    "resources": [
+      "chef",
+      "burner",
+      "pot",
+      "pan"
+    ],
+    "max_simulated_time": 1800,
+    "orders": [
+      {
+        "menu": "lemon_pasta",
+        "deadline": 1500
+      },
+      {
+        "menu": "lemon_pasta",
+        "deadline": 900
+      }
+    ]
+  },
+  "settings": {
+    "model": "openai/gpt-4o",
+    "max_model_calls": 40,
+    "max_tool_calls": 80,
+    "max_simulated_time": 1800,
+    "timeout_seconds": 300.0,
+    "skip_forced_moves": true
+  },
+  "prompt": null,
+  "prompt_sha256": null,
+  "baseline": "scripts.run_local.run_scripted; earliest deadline first",
+  "metrics": {
+    "all_served": true,
+    "all_on_time": true,
+    "unserved_orders": 0,
+    "late_orders": 0,
+    "total_tardiness": 0,
+    "finished_at": 1420,
+    "model_calls": 0,
+    "tool_calls": 0,
+    "input_tokens": 0,
+    "output_tokens": 0,
+    "rejected_tool_calls": 0,
+    "provider_retries": 0,
+    "termination_reason": "completed",
+    "run_success": true,
+    "orders": [
+      {
+        "order_id": "order_1",
+        "deadline": 1500,
+        "served": true,
+        "served_at": 1420,
+        "tardiness": 0,
+        "on_time": true
+      },
+      {
+        "order_id": "order_2",
+        "deadline": 900,
+        "served": true,
+        "served_at": 710,
+        "tardiness": 0,
+        "on_time": true
+      }
+    ]
+  },
+  "controller_result": {
+    "ok": true,
+    "status": "served",
+    "termination_reason": "completed",
+    "model_calls": 0,
+    "tool_calls": 0
+  },
+  "events": [
+    {
+      "ok": true,
+      "action": "order_accepted",
+      "time": 0,
+      "order_id": "order_1",
+      "menu": "lemon_pasta",
+      "deadline": 1500
+    },
+    {
+      "ok": true,
+      "action": "order_accepted",
+      "time": 0,
+      "order_id": "order_2",
+      "menu": "lemon_pasta",
+      "deadline": 900
+    },
+    {
+      "ok": true,
+      "action": "task_started",
+      "time": 0,
+      "order_id": "order_2",
+      "task_id": "collect_ingredients",
+      "finishes_at": 20
+    },
+    {
+      "ok": true,
+      "action": "tasks_completed",
+      "time": 20,
+      "completed": [
+        {
+          "order_id": "order_2",
+          "task_id": "collect_ingredients"
+        }
+      ]
+    },
+    {
+      "ok": true,
+      "action": "task_started",
+      "time": 20,
+      "order_id": "order_2",
+      "task_id": "boil_water",
+      "finishes_at": 140
+    },
+    {
+      "ok": true,
+      "action": "task_started",
+      "time": 20,
+      "order_id": "order_2",
+      "task_id": "prepare_mint",
+      "finishes_at": 40
+    },
+    {
+      "ok": true,
+      "action": "tasks_completed",
+      "time": 40,
+      "completed": [
+        {
+          "order_id": "order_2",
+          "task_id": "prepare_mint"
+        }
+      ]
+    },
+    {
+      "ok": true,
+      "action": "task_started",
+      "time": 40,
+      "order_id": "order_2",
+      "task_id": "crush_garlic",
+      "finishes_at": 60
+    },
+    {
+      "ok": true,
+      "action": "tasks_completed",
+      "time": 60,
+      "completed": [
+        {
+          "order_id": "order_2",
+          "task_id": "crush_garlic"
+        }
+      ]
+    },
+    {
+      "ok": true,
+      "action": "tasks_completed",
+      "time": 140,
+      "completed": [
+        {
+          "order_id": "order_2",
+          "task_id": "boil_water"
+        }
+      ]
+    },
+    {
+      "ok": true,
+      "action": "task_started",
+      "time": 140,
+      "order_id": "order_2",
+      "task_id": "cook_pasta_halfway",
+      "finishes_at": 380
+    },
+    {
+      "ok": true,
+      "action": "tasks_completed",
+      "time": 380,
+      "completed": [
+        {
+          "order_id": "order_2",
+          "task_id": "cook_pasta_halfway"
+        }
+      ]
+    },
+    {
+      "ok": true,
+      "action": "task_started",
+      "time": 380,
+      "order_id": "order_2",
+      "task_id": "reserve_water_and_drain",
+      "finishes_at": 400
+    },
+    {
+      "ok": true,
+      "action": "tasks_completed",
+      "time": 400,
+      "completed": [
+        {
+          "order_id": "order_2",
+          "task_id": "reserve_water_and_drain"
+        }
+      ]
+    },
+    {
+      "ok": true,
+      "action": "task_started",
+      "time": 400,
+      "order_id": "order_2",
+      "task_id": "prepare_sauce",
+      "finishes_at": 440
+    },
+    {
+      "ok": true,
+      "action": "tasks_completed",
+      "time": 440,
+      "completed": [
+        {
+          "order_id": "order_2",
+          "task_id": "prepare_sauce"
+        }
+      ]
+    },
+    {
+      "ok": true,
+      "action": "task_started",
+      "time": 440,
+      "order_id": "order_2",
+      "task_id": "finish_pasta",
+      "finishes_at": 680
+    },
+    {
+      "ok": true,
+      "action": "tasks_completed",
+      "time": 680,
+      "completed": [
+        {
+          "order_id": "order_2",
+          "task_id": "finish_pasta"
+        }
+      ]
+    },
+    {
+      "ok": true,
+      "action": "task_started",
+      "time": 680,
+      "order_id": "order_2",
+      "task_id": "finish_off_heat",
+      "finishes_at": 710
+    },
+    {
+      "ok": true,
+      "action": "tasks_completed",
+      "time": 710,
+      "completed": [
+        {
+          "order_id": "order_2",
+          "task_id": "finish_off_heat"
+        }
+      ]
+    },
+    {
+      "ok": true,
+      "action": "order_served",
+      "time": 710,
+      "order_id": "order_2",
+      "on_time": true
+    },
+    {
+      "ok": true,
+      "action": "task_started",
+      "time": 710,
+      "order_id": "order_1",
+      "task_id": "collect_ingredients",
+      "finishes_at": 730
+    },
+    {
+      "ok": true,
+      "action": "tasks_completed",
+      "time": 730,
+      "completed": [
+        {
+          "order_id": "order_1",
+          "task_id": "collect_ingredients"
+        }
+      ]
+    },
+    {
+      "ok": true,
+      "action": "task_started",
+      "time": 730,
+      "order_id": "order_1",
+      "task_id": "boil_water",
+      "finishes_at": 850
+    },
+    {
+      "ok": true,
+      "action": "task_started",
+      "time": 730,
+      "order_id": "order_1",
+      "task_id": "prepare_mint",
+      "finishes_at": 750
+    },
+    {
+      "ok": true,
+      "action": "tasks_completed",
+      "time": 750,
+      "completed": [
+        {
+          "order_id": "order_1",
+          "task_id": "prepare_mint"
+        }
+      ]
+    },
+    {
+      "ok": true,
+      "action": "task_started",
+      "time": 750,
+      "order_id": "order_1",
+      "task_id": "crush_garlic",
+      "finishes_at": 770
+    },
+    {
+      "ok": true,
+      "action": "tasks_completed",
+      "time": 770,
+      "completed": [
+        {
+          "order_id": "order_1",
+          "task_id": "crush_garlic"
+        }
+      ]
+    },
+    {
+      "ok": true,
+      "action": "tasks_completed",
+      "time": 850,
+      "completed": [
+        {
+          "order_id": "order_1",
+          "task_id": "boil_water"
+        }
+      ]
+    },
+    {
+      "ok": true,
+      "action": "task_started",
+      "time": 850,
+      "order_id": "order_1",
+      "task_id": "cook_pasta_halfway",
+      "finishes_at": 1090
+    },
+    {
+      "ok": true,
+      "action": "tasks_completed",
+      "time": 1090,
+      "completed": [
+        {
+          "order_id": "order_1",
+          "task_id": "cook_pasta_halfway"
+        }
+      ]
+    },
+    {
+      "ok": true,
+      "action": "task_started",
+      "time": 1090,
+      "order_id": "order_1",
+      "task_id": "reserve_water_and_drain",
+      "finishes_at": 1110
+    },
+    {
+      "ok": true,
+      "action": "tasks_completed",
+      "time": 1110,
+      "completed": [
+        {
+          "order_id": "order_1",
+          "task_id": "reserve_water_and_drain"
+        }
+      ]
+    },
+    {
+      "ok": true,
+      "action": "task_started",
+      "time": 1110,
+      "order_id": "order_1",
+      "task_id": "prepare_sauce",
+      "finishes_at": 1150
+    },
+    {
+      "ok": true,
+      "action": "tasks_completed",
+      "time": 1150,
+      "completed": [
+        {
+          "order_id": "order_1",
+          "task_id": "prepare_sauce"
+        }
+      ]
+    },
+    {
+      "ok": true,
+      "action": "task_started",
+      "time": 1150,
+      "order_id": "order_1",
+      "task_id": "finish_pasta",
+      "finishes_at": 1390
+    },
+    {
+      "ok": true,
+      "action": "tasks_completed",
+      "time": 1390,
+      "completed": [
+        {
+          "order_id": "order_1",
+          "task_id": "finish_pasta"
+        }
+      ]
+    },
+    {
+      "ok": true,
+      "action": "task_started",
+      "time": 1390,
+      "order_id": "order_1",
+      "task_id": "finish_off_heat",
+      "finishes_at": 1420
+    },
+    {
+      "ok": true,
+      "action": "tasks_completed",
+      "time": 1420,
+      "completed": [
+        {
+          "order_id": "order_1",
+          "task_id": "finish_off_heat"
+        }
+      ]
+    },
+    {
+      "ok": true,
+      "action": "order_served",
+      "time": 1420,
+      "order_id": "order_1",
+      "on_time": true
+    }
+  ]
+}

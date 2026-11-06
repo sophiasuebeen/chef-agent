@@ -26,8 +26,8 @@ def load_scenario(path=SCENARIO_PATH) -> dict:
     cap = scenario["max_simulated_time"]
     if type(cap) is not int or cap <= 0:
         raise ValueError("Scenario simulated-time cap must be a positive integer.")
-    if len(scenario["orders"]) != 2:
-        raise ValueError("This scenario requires exactly two orders.")
+    if len(scenario["orders"]) < 2:
+        raise ValueError("A prompt comparison needs at least two competing orders.")
     for order in scenario["orders"]:
         if order["menu"] != "lemon_pasta":
             raise ValueError("This evaluation supports lemon_pasta only.")
@@ -74,8 +74,8 @@ def build_report(scenario, settings, kitchen, result, variant, repetition):
 
 def comparison_table(reports) -> str:
     lines = [
-        "# Two-order exploratory comparison", "",
-        "Small per-prompt samples (default: three runs) are exploratory, not evidence of a confirmed performance improvement.",
+        "# Exploratory prompt comparison", "",
+        "Small per-prompt samples are exploratory, not evidence of a confirmed performance improvement.",
         "Unserved orders are separate from served-order tardiness. A stopped run with zero tardiness is not a success.",
         "finished_at is the last observed simulated time, including stopped episodes.", "",
         "| variant | run | all_served | all_on_time | unserved | late | tardiness (s) | finished_at | model/tool calls | termination | success |",
@@ -119,7 +119,7 @@ def terminal_table(reports) -> str:
         ).rstrip()
 
     return "\n".join([
-        "Two-order exploratory comparison (small sample; not a confirmed improvement)",
+        "Exploratory prompt comparison (small sample; not a confirmed improvement)",
         "A stopped run with zero tardiness is not a success. end_s includes stopped runs.",
         "",
         line(headers),
@@ -137,7 +137,8 @@ async def run_comparison(scenario, settings, output_dir, *, repetitions=3, live=
     """
     if type(repetitions) is not int or repetitions <= 0:
         raise ValueError("Repetitions must be a positive integer.")
-    settings = replace(settings, max_simulated_time=scenario["max_simulated_time"])
+    settings = replace(settings, max_simulated_time=scenario["max_simulated_time"],
+                       skip_forced_moves=True)
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=False)
     reports = []
@@ -177,17 +178,24 @@ async def run_comparison(scenario, settings, output_dir, *, repetitions=3, live=
                     result = {"ok": False, "status": "failed", "error": type(error).__name__,
                               "termination_reason": "setup_error", "model_calls": 0, "tool_calls": 0}
                 save(kitchen, result, variant, repetition)
+                # Retries are already exhausted here, so more episodes would only
+                # spend calls against a provider that is refusing them.
+                if result["termination_reason"] == "api_error":
+                    progress.info("Stopping after provider failure: %s of %s episodes not run.",
+                                  total - number, total)
+                    return reports
     return reports
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     mode = parser.add_mutually_exclusive_group(required=True)
-    mode.add_argument("--live", action="store_true", help="Run 3 live episodes per prompt plus baseline")
+    mode.add_argument("--live", action="store_true", help="Run live episodes per prompt plus baseline")
     mode.add_argument("--baseline-only", action="store_true", help="No SDK or credentials needed")
     parser.add_argument("--scenario", type=Path, default=SCENARIO_PATH)
     parser.add_argument("--model", help="Override CHEF_MODEL, e.g. openai/gpt-4o")
-    parser.add_argument("--repetitions", type=int, default=3)
+    parser.add_argument("--repetitions", type=int, default=1,
+                        help="Episodes per prompt; each one spends model calls")
     parser.add_argument("--output", type=Path)
     args = parser.parse_args()
     enable_progress_logs()

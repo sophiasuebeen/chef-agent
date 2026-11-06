@@ -31,6 +31,39 @@ def result(reason="completed", ok=True):
             "termination_reason": reason, "model_calls": 3, "tool_calls": 7}
 
 
+class ScenarioFileTests(unittest.TestCase):
+    def test_every_scenario_file_loads_and_runs_the_baseline_within_its_cap(self):
+        paths = sorted((Path(load_scenario.__defaults__[0]).parent).glob("*.json"))
+        self.assertEqual(len(paths), 5)
+        for path in paths:
+            with self.subTest(path.name):
+                scenario = load_scenario(path)
+                kitchen = initialize_kitchen(scenario)
+                outcome = run_baseline(
+                    kitchen, Settings(max_simulated_time=scenario["max_simulated_time"]))
+                self.assertTrue(outcome["ok"])
+                self.assertTrue(calculate_metrics(kitchen.state, outcome)["all_served"])
+
+    def test_impossible_scenarios_cannot_all_be_on_time_for_the_baseline(self):
+        directory = Path(load_scenario.__defaults__[0]).parent
+        for name in ("two_orders_impossible", "three_orders_impossible"):
+            with self.subTest(name):
+                scenario = load_scenario(directory / f"{name}.json")
+                kitchen = initialize_kitchen(scenario)
+                outcome = run_baseline(
+                    kitchen, Settings(max_simulated_time=scenario["max_simulated_time"]))
+                self.assertFalse(calculate_metrics(kitchen.state, outcome)["all_on_time"])
+
+    def test_a_single_order_scenario_is_rejected(self):
+        scenario = {"chef_count": 1, "max_simulated_time": 900,
+                    "orders": [{"menu": "lemon_pasta", "deadline": 900}]}
+        with TemporaryDirectory() as directory:
+            path = Path(directory) / "one.json"
+            path.write_text(json.dumps(scenario), encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "at least two"):
+                load_scenario(path)
+
+
 class EvaluationMetricTests(unittest.TestCase):
     def setUp(self):
         self.scenario = load_scenario()
@@ -224,6 +257,37 @@ class EvaluationRunnerTests(unittest.IsolatedAsyncioTestCase):
                                            episode_runner=forbidden)
         self.assertEqual(len(reports), 1)
         self.assertTrue(reports[0]["metrics"]["run_success"])
+
+    async def test_provider_failure_stops_remaining_episodes(self):
+        calls = []
+
+        async def refused(kitchen, settings, *, prompt_variant):
+            calls.append(prompt_variant)
+            return result("api_error", False)
+
+        with TemporaryDirectory() as directory:
+            output = Path(directory) / "refused"
+            with self.assertLogs("pasta_chef.progress", "INFO") as logs:
+                reports = await run_comparison(load_scenario(), Settings(), output, live=True,
+                                               repetitions=3, episode_runner=refused)
+            self.assertTrue((output / "original-1.json").exists())
+            self.assertFalse((output / "deadline-1.json").exists())
+        self.assertEqual(calls, ["original"])
+        self.assertEqual([r["variant"] for r in reports], ["scripted", "original"])
+        self.assertIn("5 of 6 episodes not run", "\n".join(logs.output))
+
+    async def test_episodes_skip_forced_moves_and_record_that_setting(self):
+        seen = []
+
+        async def offline_episode(kitchen, settings, *, prompt_variant):
+            seen.append(settings.skip_forced_moves)
+            return result("model_call_limit", False)
+
+        with TemporaryDirectory() as directory:
+            reports = await run_comparison(load_scenario(), Settings(), Path(directory) / "flag",
+                                           live=True, repetitions=1, episode_runner=offline_episode)
+        self.assertEqual(seen, [True, True])
+        self.assertTrue(all(r["settings"]["skip_forced_moves"] for r in reports))
 
     async def test_setup_failure_is_recorded_and_comparison_continues(self):
         async def unavailable(*args, **kwargs):
