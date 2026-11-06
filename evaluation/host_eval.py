@@ -21,6 +21,13 @@ def score_case(case, outcome):
         problems.append(f"orders {dict(Counter(outcome['orders']))} != {case['expect_orders']}")
     if outcome["failed"]:
         problems.append("the model did not answer")
+    noted = [action for action in outcome.get("actions", []) if action["type"] == "small_talk"]
+    if "expect_small_talk" in case and bool(noted) != case["expect_small_talk"]:
+        problems.append(f"small talk noted: {bool(noted)}, expected {case['expect_small_talk']}")
+    decisions = [action["decision"] for action in noted]
+    expected = case.get("expect_decisions")
+    if expected and decisions != expected:
+        problems.append(f"decisions {decisions} != {expected}")
     reply = outcome["replies"][-1]
     wanted = case.get("reply_must_include_any")
     if wanted and not any(word in reply for word in wanted):
@@ -34,7 +41,7 @@ def score_case(case, outcome):
 async def run_case(case):
     from pasta_chef.agents.host import create_host
     from pasta_chef.runtime.sessions import LiveSession
-    session = LiveSession(speed=10)
+    session = LiveSession(speed=10, chefs=case.get("chefs", 1))
     host = create_host(session)
     replies, failed, actions = [], False, []
     for message in case["messages"]:

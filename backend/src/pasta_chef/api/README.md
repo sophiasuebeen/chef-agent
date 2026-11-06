@@ -144,6 +144,12 @@ Messages go to the host LLM and can incur provider charges. Its tools are `place
 `get_order_status`, and code validates each call against the live session. `actions` lists what
 actually happened, built by code rather than taken from the model's reply. If the model fails,
 the response is still `200` with a fixed reply and `failed: true`, and cooking is unaffected.
+Small talk costs chef time. The host marks it with `note_small_talk`, and code decides what follows:
+a chef chats and is held for 30 simulated seconds per turn, for up to 3 turns. After that, or if
+holding would make an on-time order late, a free chef takes over once (`hand_off`). If nobody is free,
+or the second chef's turns run out too, the host ends the conversation (`end`). The budget refills after
+300 simulated seconds without small talk. `speaker` names the chef answering.
+
 `POST /sessions` also returns `initial_state` and `recipes`, so clients can rebuild state from
 events. Check the host with `python -m evaluation.host_eval`, which makes live provider calls.
 

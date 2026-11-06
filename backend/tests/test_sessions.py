@@ -284,6 +284,35 @@ class LiveChefHoldTests(unittest.TestCase):
         live.advance_to(20)
         self.assertEqual(self.actions(live, "chef_held"), [("chef_held", 20)])
 
+    def test_a_named_chef_can_be_held_and_must_be_free(self):
+        kitchen = Kitchen(chefs=2)
+        self.assertEqual(kitchen.hold_chef("chef_2")["chef"], "chef_2")
+        self.assertIsNone(kitchen.state.resources["chef"])
+        for name in ("chef_2", "chef_3", "pot"):
+            with self.subTest(name), self.assertRaisesRegex(ValueError, "Resource unavailable"):
+                kitchen.hold_chef(name)
+
+    def test_a_transfer_frees_the_first_chef_and_keeps_the_kitchen_consistent(self):
+        live = LiveKitchen(chefs=2)
+        live.hold_chef(0, 60)
+        self.assertEqual(live.held_chef, "chef")
+        self.assertEqual(live.transfer_hold(10, 60), "chef_2")
+        resources = live.kitchen.state.resources
+        self.assertIsNone(resources["chef"])
+        self.assertEqual(resources["chef_2"], ("customer", "chat"))
+        self.assertEqual(live.chef_hold["until"], 70)
+        live.advance_to(100)
+        self.assertTrue(all(owner is None for owner in resources.values()))
+        self.assertEqual(self.actions(live, "chef_held", "chef_released"),
+                         [("chef_held", 0), ("chef_released", 10), ("chef_held", 10), ("chef_released", 70)])
+
+    def test_a_transfer_with_nobody_free_changes_nothing(self):
+        live = LiveKitchen()
+        live.hold_chef(0, 60)
+        self.assertIsNone(live.transfer_hold(10, 60))
+        self.assertEqual(live.held_chef, "chef")
+        self.assertEqual(live.chef_hold["until"], 60)
+
     def test_invalid_holds_change_nothing(self):
         live = self.order_then_hold(60)
         live.advance_to(50)

@@ -172,10 +172,10 @@ class Kitchen:
         return self._record(dict(ok=True, action="order_served", time=self.state.time,
                                  order_id=order_id, on_time=order.on_time))
 
-    def hold_chef(self) -> dict:
+    def hold_chef(self, chef: str | None = None) -> dict:
         """Reserve a free chef for a customer. Background cooking and deadlines keep running."""
-        chef = free_chef(self.state)
-        if chef is None:
+        chef = free_chef(self.state) if chef is None else chef
+        if chef not in chef_names(self.state) or self.state.resources[chef] is not None:
             raise ValueError("Resource unavailable: chef")
         self.state.resources[chef] = CUSTOMER_CHAT
         return self._record(dict(ok=True, action="chef_held", time=self.state.time, chef=chef))

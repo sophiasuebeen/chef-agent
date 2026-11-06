@@ -48,6 +48,12 @@ if BaseLlm:
             yield LlmResponse(content=types.Content(role="model", parts=parts))
 
 
+def label_as(label):
+    async def classify(text):
+        return label
+    return classify
+
+
 def order(menu="lemon_pasta", quantity=1):
     return [("place_order", dict(menu_id=menu, quantity=quantity))]
 
@@ -60,7 +66,7 @@ class HostTests(unittest.IsolatedAsyncioTestCase):
 
     def host(self, *script):
         self.model = ScriptedModel(model="scripted", script=list(script), requests=[])
-        return HostAgent(self.session, self.model)
+        return HostAgent(self.session, self.model, classify=label_as("kitchen"))
 
     def orders(self):
         return self.session.snapshot()["orders"]
@@ -182,7 +188,7 @@ class HostTests(unittest.IsolatedAsyncioTestCase):
             async def generate_content_async(self, llm_request, stream=False):
                 await asyncio.sleep(60)
                 yield LlmResponse()
-        host = HostAgent(self.session, Hanging(model="hanging"))
+        host = HostAgent(self.session, Hanging(model="hanging"), classify=label_as("kitchen"))
         with patch("pasta_chef.agents.host.REPLY_TIMEOUT_SECONDS", 0.01):
             result = await host.reply("안녕하세요")
         self.assertTrue(result["failed"])
@@ -210,6 +216,123 @@ class HostTests(unittest.IsolatedAsyncioTestCase):
 
 
 @unittest.skipUnless(BaseLlm, "ADK not installed")
+class SmallTalkHostTests(unittest.IsolatedAsyncioTestCase):
+    def setUp(self):
+        self.clock = FakeClock()
+
+    def host(self, chefs, *script):
+        self.session = LiveSession(speed=10, clock=self.clock, chefs=chefs)
+        self.model = ScriptedModel(model="scripted", script=list(script), requests=[])
+        return HostAgent(self.session, self.model, classify=label_as("small_talk"))
+
+    async def pester(self, host, times):
+        results = []
+        for _ in range(times):
+            self.model.script += ["네"]
+            results.append(await host.reply("수다"))
+        return results
+
+    def decisions(self, results):
+        return [result["actions"][0]["decision"] for result in results]
+
+    async def test_chat_holds_a_chef_and_reports_who_is_talking(self):
+        host = self.host(1, "좋은 날씨죠")
+        result = await host.reply("날씨 좋네요")
+        self.assertEqual(result["actions"], [dict(type="small_talk", decision="chat", chef="chef")])
+        self.assertEqual(result["speaker"], "chef")
+        state = self.session.snapshot()
+        self.assertEqual(state["chef_hold"]["status"], "active")
+        self.assertEqual(state["resources"]["chef"], ["customer", "chat"])
+
+    async def test_pestering_goes_to_the_resting_chef_who_then_also_stops(self):
+        results = await self.pester(self.host(2), 8)
+        self.assertEqual(self.decisions(results), ["chat", "chat", "chat", "hand_off", "chat", "chat", "end", "end"])
+        self.assertEqual(results[0]["speaker"], "chef")
+        self.assertEqual(results[3]["speaker"], "chef_2")
+        self.assertEqual(self.session.snapshot()["chef_hold"]["status"], "none")
+
+    async def test_the_hand_off_really_moves_the_hold(self):
+        results = await self.pester(self.host(2), 4)
+        resources = self.session.snapshot()["resources"]
+        self.assertEqual(results[-1]["speaker"], "chef_2")
+        self.assertIsNone(resources["chef"])
+        self.assertEqual(resources["chef_2"], ["customer", "chat"])
+
+    async def test_with_nobody_free_the_conversation_ends_politely(self):
+        results = await self.pester(self.host(1), 5)
+        self.assertEqual(self.decisions(results), ["chat", "chat", "chat", "end", "end"])
+        self.assertEqual(self.session.snapshot()["chef_hold"]["status"], "none")
+
+    async def test_the_budget_refills_after_a_quiet_while(self):
+        host = self.host(1)
+        await self.pester(host, 4)
+        self.clock.now += 40  # 400 simulated seconds.
+        self.assertEqual(self.decisions(await self.pester(host, 1)), ["chat"])
+
+    async def test_chat_that_would_make_an_on_time_order_late_is_declined(self):
+        host = self.host(1)
+        self.session.add_orders([("lemon_pasta", 715)])
+        self.clock.now += 38  # 380 simulated: the chef is needed right now and slack is 5 seconds.
+        results = await self.pester(host, 1)
+        self.assertEqual(results[0]["actions"][0]["decision"], "end")
+        self.assertEqual(self.session.snapshot()["orders"][0]["served_at"], None)
+        self.clock.now += 100
+        self.assertTrue(self.session.snapshot()["orders"][0]["on_time"])
+
+    async def test_a_late_order_stays_cheap_to_chat_over(self):
+        host = self.host(1)
+        self.session.add_orders([("lemon_pasta", 100)])  # Already hopeless: chat cannot newly make it late.
+        results = await self.pester(host, 1)
+        self.assertEqual(results[0]["actions"][0]["decision"], "chat")
+
+    def system_text(self):
+        return self.model.requests[-1].config.system_instruction
+
+    async def test_the_decision_reaches_the_model_through_the_system_instruction(self):
+        host = self.host(1)
+        await self.pester(host, 4)
+        self.assertIn("nobody is free", self.system_text())
+        last_user = [part.text for part in self.model.requests[-1].contents[-1].parts]
+        self.assertEqual(last_user, ["수다"])
+
+    async def test_the_helper_is_told_who_it_is_and_the_note_lasts_one_turn(self):
+        host = self.host(2)
+        await self.pester(host, 4)
+        self.assertIn("colleague", self.system_text())
+        await self.pester(host, 1)
+        self.assertIn("second chef", self.system_text())
+        host._classify = label_as("kitchen")
+        self.model.script += ["네"]
+        await host.reply("메뉴 뭐 있어요?")
+        self.assertNotIn("Kitchen note", self.system_text())
+        self.assertNotIn("second chef", self.system_text())
+
+    async def test_kitchen_and_other_messages_cost_no_budget(self):
+        for label in ("kitchen", "other"):
+            host = self.host(1, "네")
+            host._classify = label_as(label)
+            result = await host.reply("메뉴요")
+            self.assertEqual(result["actions"], [])
+            self.assertEqual(self.session._small_talk_turns, 0)
+
+    async def test_a_failed_label_just_answers_without_spending_budget(self):
+        async def broken(text):
+            raise RuntimeError("down")
+        host = self.host(1, "네")
+        host._classify = broken
+        result = await host.reply("수다")
+        self.assertFalse(result["failed"])
+        self.assertEqual(result["reply"], "네")
+        self.assertEqual(self.session._small_talk_turns, 0)
+
+    async def test_ordering_costs_no_conversation_budget(self):
+        host = self.host(1, order(), "네")
+        host._classify = label_as("kitchen")
+        await host.reply("레몬 파스타요")
+        self.assertEqual(self.session._small_talk_turns, 0)
+
+
+@unittest.skipUnless(BaseLlm, "ADK not installed")
 class MessageApiTests(unittest.TestCase):
     def setUp(self):
         self.clock = FakeClock()
@@ -217,7 +340,7 @@ class MessageApiTests(unittest.TestCase):
         self.app.state.sessions = SessionStore(clock=self.clock)
         self.script = []
         self.app.state.host_factory = lambda session: HostAgent(
-            session, ScriptedModel(model="scripted", script=self.script, requests=[]))
+            session, ScriptedModel(model="scripted", script=self.script, requests=[]), classify=label_as("kitchen"))
         self.client = TestClient(self.app)
         self.session_id = self.client.post("/sessions").json()["session_id"]
         self.path = f"/sessions/{self.session_id}/messages"

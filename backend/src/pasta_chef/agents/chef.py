@@ -60,8 +60,10 @@ def without_stale_observations(contents):
             for content in contents]
 
 
-def resolve_model(model, **retry_options):
-    """Turn a configured model name into a retried client. Injected models pass through."""
+def resolve_model(model, *, uses_tools=True, **retry_options):
+    """Turn a configured model name into a retried client. Injected models pass through.
+
+    OpenAI rejects parallel_tool_calls on requests without tools, so tool-free agents say so."""
     if not isinstance(model, str):
         return model
     from pasta_chef.agents.retrying_llm import RetryingLlm
@@ -76,7 +78,8 @@ def resolve_model(model, **retry_options):
         name = model if model.startswith("openai/") else f"openai/{model}"
         # One action per decision, so each choice sees a fresh observation.
         # Retries live in RetryingLlm so they are bounded and logged.
-        inner = LiteLlm(model=name, num_retries=0, parallel_tool_calls=False)
+        options = dict(parallel_tool_calls=False) if uses_tools else {}
+        inner = LiteLlm(model=name, num_retries=0, **options)
     else:
         from google.adk.models.google_llm import Gemini
         name, inner = model, Gemini(model=model)

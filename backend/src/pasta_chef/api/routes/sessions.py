@@ -51,9 +51,11 @@ class MessageCreate(BaseModel):
 
 class HostAction(BaseModel):
     """What actually happened, reported by code rather than by the model."""
-    type: Literal["order_accepted", "order_rejected"]
-    menu: str
-    quantity: int | None
+    type: Literal["order_accepted", "order_rejected", "small_talk"]
+    menu: str | None = None
+    quantity: int | None = None
+    decision: Literal["chat", "hand_off", "end"] | None = None
+    chef: str | None = None
     order_ids: list[str] = []
     ready_in_seconds: int | None = None
     reason: str | None = None
@@ -63,6 +65,7 @@ class MessageReply(BaseModel):
     reply: str
     actions: list[HostAction]
     failed: bool
+    speaker: str = "chef"
 
 
 class SessionOrderCreate(OrderCreate):
