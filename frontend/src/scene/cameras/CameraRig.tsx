@@ -2,7 +2,7 @@ import { useFrame, useThree } from '@react-three/fiber';
 import { useLayoutEffect, useRef } from 'react';
 import { MathUtils, PerspectiveCamera, Vector3 } from 'three';
 import { cameraPresets, REFERENCE_ASPECT } from '../../data/cameraPresets';
-import { anchors } from '../../data/layout';
+import { anchors, type Vec3 } from '../../data/layout';
 import { useSceneStore } from '../../state/sceneStore';
 
 export interface UiSafeArea {
@@ -51,7 +51,7 @@ function anchorPosition(id: string): Vector3 {
   return new Vector3(...anchor.position);
 }
 
-export function CameraRig({ uiSafeArea = NO_SAFE_AREA }: { uiSafeArea?: UiSafeArea }) {
+export function CameraRig({ uiSafeArea = NO_SAFE_AREA, chefFocus }: { uiSafeArea?: UiSafeArea; chefFocus?: Vec3 }) {
   const camera = useThree((state) => state.camera);
   const width = useThree((state) => state.size.width);
   const height = useThree((state) => state.size.height);
@@ -66,10 +66,17 @@ export function CameraRig({ uiSafeArea = NO_SAFE_AREA }: { uiSafeArea?: UiSafeAr
   const currentTarget = useRef(new Vector3());
   const goalFov = useRef(framing.fov);
   const initialized = useRef(false);
+  const focusX = chefFocus?.[0], focusY = chefFocus?.[1], focusZ = chefFocus?.[2];
 
   useLayoutEffect(() => {
     goalPosition.current.set(...preset.position);
     goalTarget.current.copy(anchorPosition(preset.targetAnchorId));
+    if (presetId === 'chef' && focusX !== undefined && focusY !== undefined && focusZ !== undefined) {
+      // Look along the work surface from the aisle, keeping the chef's hair/body
+      // from hiding the hands. Switch sides before the east kitchen wall.
+      goalPosition.current.set(focusX + (focusX > 1 ? -1.65 : 1.65), 2.3, focusZ + 0.75);
+      goalTarget.current.set(focusX, focusY, focusZ);
+    }
     goalFov.current = framing.fov;
     if (!(camera instanceof PerspectiveCamera)) return;
 
@@ -87,7 +94,7 @@ export function CameraRig({ uiSafeArea = NO_SAFE_AREA }: { uiSafeArea?: UiSafeAr
       camera.setViewOffset(width, height, framing.offsetX, framing.offsetY, width, height);
     }
     camera.updateProjectionMatrix();
-  }, [camera, preset, framing.fov, framing.offsetX, framing.offsetY, width, height]);
+  }, [camera, preset, presetId, framing.fov, framing.offsetX, framing.offsetY, width, height, focusX, focusY, focusZ]);
 
   useFrame((_, delta) => {
     if (!(camera instanceof PerspectiveCamera)) return;

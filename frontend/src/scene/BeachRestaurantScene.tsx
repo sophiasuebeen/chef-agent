@@ -1,5 +1,5 @@
 import { Canvas, type ThreeEvent } from '@react-three/fiber';
-import { useLayoutEffect, useRef, type ReactNode } from 'react';
+import { memo, useLayoutEffect, useRef, type ReactNode } from 'react';
 import type { Object3D } from 'three';
 import type { CameraPresetId } from '../data/cameraPresets';
 import { DEFAULT_TIME_OF_DAY, type TimeOfDayId } from '../data/timeOfDay';
@@ -15,6 +15,9 @@ import { DiningHall } from './zones/DiningHall';
 import { Kitchen } from './zones/Kitchen';
 import { Seascape } from './zones/Seascape';
 import { Terrace } from './zones/Terrace';
+import { KitchenReplay } from './kitchen/KitchenReplay';
+import type { KitchenFrame } from './replayPresentation';
+import { stations, type Vec3 } from '../data/layout';
 
 export type { SceneObjectRef } from './Interactable';
 export type { UiSafeArea } from './cameras/CameraRig';
@@ -27,7 +30,14 @@ export interface BeachRestaurantSceneProps {
   onObjectClick?: (event: SceneObjectRef) => void;
   onObjectHover?: (event: SceneObjectRef | null) => void;
   uiSafeArea?: UiSafeArea;
+  /** Same simulated timestamp and sequence as the replay controls; never wall-clock time. */
+  replayFrame?: KitchenFrame;
 }
+
+const StaticKitchen = memo(Kitchen);
+const StaticDiningHall = memo(DiningHall);
+const StaticTerrace = memo(Terrace);
+const StaticSeascape = memo(Seascape);
 
 /** 맞은 메시에서 위로 올라가 가장 가까운 상호작용 물건을 찾는다 (GLB 자식 메시도 동일). */
 function findInteractable(hit: Object3D): SceneObjectRef | null {
@@ -91,10 +101,13 @@ export function BeachRestaurantScene({
   onObjectClick,
   onObjectHover,
   uiSafeArea,
+  replayFrame,
 }: BeachRestaurantSceneProps) {
   const setCameraPreset = useSceneStore((state) => state.setCameraPreset);
   const setHighlightedIds = useSceneStore((state) => state.setHighlightedIds);
   const setTimeOfDay = useSceneStore((state) => state.setTimeOfDay);
+  const chefStation = stations.find((station) => station.type === (replayFrame?.chef.station ?? 'pass'))!;
+  const chefFocus: Vec3 = [chefStation.chefSpot[0], 1.15, chefStation.chefSpot[2]];
 
   useLayoutEffect(() => setCameraPreset(cameraPreset), [cameraPreset, setCameraPreset]);
   useLayoutEffect(() => setTimeOfDay(timeOfDay), [timeOfDay, setTimeOfDay]);
@@ -104,13 +117,14 @@ export function BeachRestaurantScene({
 
   return (
     <Canvas shadows="soft" dpr={[1, 1.5]} gl={{ antialias: false, stencil: false }} camera={{ near: 0.2, far: 3200 }}>
-      <Lighting />
-      <CameraRig uiSafeArea={uiSafeArea} />
+      <Lighting shadowTime={replayFrame?.time} shadowSequence={replayFrame?.sequence} />
+      <CameraRig uiSafeArea={uiSafeArea} chefFocus={chefFocus} />
       <PointerRoot onObjectClick={onObjectClick} onObjectHover={onObjectHover}>
-        <Kitchen />
-        <DiningHall />
-        <Terrace />
-        <Seascape />
+        <StaticKitchen />
+        <KitchenReplay frame={replayFrame} />
+        <StaticDiningHall />
+        <StaticTerrace />
+        <StaticSeascape />
       </PointerRoot>
       <LayoutDebug />
       <PostEffects />

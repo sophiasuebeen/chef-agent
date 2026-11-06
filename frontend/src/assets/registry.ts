@@ -24,7 +24,7 @@ import {
 } from '../scene/props/TerraceDecor';
 import { lightPoolParts, pendantParts, standingLampParts, wallWashParts } from '../scene/props/Pendant';
 import { makePlaceholder } from '../scene/props/Placeholder';
-import { dinnerPlateParts, pastaParts } from '../scene/props/PlateOfPasta';
+import { dinnerPlateParts, pastaParts, seafoodTomatoParts } from '../scene/props/PlateOfPasta';
 import { marbleSlabParts, roundTableParts, squareTableParts } from '../scene/props/Table';
 import {
   breadBasketParts,
@@ -102,6 +102,7 @@ export const assetRegistry = {
 
   // 테이블 세팅
   'food.pasta': parts(pastaParts, 'interactive'),
+  'food.seafoodTomato': parts(seafoodTomatoParts, 'interactive'),
   'setting.napkin': parts(napkinParts, 'background'),
   'setting.wineGlass': parts(wineGlassParts, 'background'),
   'setting.oilBottle': parts(oilBottleParts, 'background'),
