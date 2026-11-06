@@ -1,6 +1,6 @@
 import { Component, lazy, Suspense, useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from 'react';
 import { replayAt, statesMatch, validateReplay, type Replay } from './replay';
-import { kitchenFrame } from './scene/replayPresentation';
+import { idleResources, isChefResource, kitchenFrame } from './scene/replayPresentation';
 import type { CameraPresetId } from './data/cameraPresets';
 import { OrderPanel } from './OrderPanel';
 import { createOrderSubmission, type CartItem } from './ordering';
@@ -45,13 +45,15 @@ export function ReplayApp() {
   const [timeDraft, setTimeDraft] = useState<string | null>(null);
   const [camera, setCamera] = useState<CameraPresetId>('kitchen');
   const [loadId, setLoadId] = useState(new URLSearchParams(window.location.search).get('run') ?? '');
+  const [chefCount, setChefCount] = useState(1);
+  const idleChefs = Number.isInteger(chefCount) && chefCount >= 1 && chefCount <= 4 ? chefCount : 1;
 
   const state = useMemo(() => replay ? replayAt(replay, position.time, position.sequence) : null,
     [replay, position]);
   const match = useMemo(() => replay
     ? statesMatch(replayAt(replay, replay.result.finished_at), replay.final_state) : false, [replay]);
   const atEnd = replay !== null && position.sequence === replay.events.length;
-  const frame = useMemo(() => kitchenFrame(replay, state, position.sequence), [replay, state, position.sequence]);
+  const frame = useMemo(() => kitchenFrame(replay, state, position.sequence, idleChefs), [replay, state, position.sequence, idleChefs]);
 
   useEffect(() => {
     if (!playing || !replay) return;
@@ -83,12 +85,12 @@ export function ReplayApp() {
     window.history.replaceState(null, '', url);
   }
 
-  async function execute(cart: CartItem[], policy: string, maxSimulatedTime: number) {
+  async function execute(cart: CartItem[], policy: string, maxSimulatedTime: number, chefs: number) {
     if (busy || submitLock.current || !cart.length) return;
     submitLock.current = true;
     setBusy(true); setError(''); setPlaying(false);
     try {
-      const data = await submitOrders(cart, policy, maxSimulatedTime);
+      const data = await submitOrders(cart, policy, maxSimulatedTime, chefs);
       showReplay(data);
       if (!data.result.completed) setError(`조리 실행 중단: ${data.result.termination_reason}${data.result.error ? ` · ${data.result.error}` : ''}`);
       else setPlaying(true);
@@ -121,11 +123,11 @@ export function ReplayApp() {
 
   return <main className="replay-app">
     <header className="page-header"><div><p className="eyebrow">Pasta Chef / kitchen simulator</p>
-      <h1>Cook. Replay. Compare.</h1><p>Watch one chef work through real kitchen constraints.</p></div>
+      <h1>Cook. Replay. Compare.</h1><p>Watch {frame.chefs.length === 1 ? 'one chef' : `${frame.chefs.length} chefs`} work through real kitchen constraints.</p></div>
       <a href="?scene">Restaurant development view ↗</a></header>
     <div className="workspace">
       <aside className="panel setup">
-        <OrderPanel busy={busy} onCook={execute} />
+        <OrderPanel busy={busy} chefs={chefCount} onChefsChange={setChefCount} onCook={execute} />
         {error && <div className="notice error" role="alert">{error}</div>}
         <form onSubmit={load} className="load-form"><label>Open a replay<input value={loadId} placeholder="Run ID" required disabled={busy}
           onChange={(e) => setLoadId(e.target.value)} /></label><button disabled={busy}>Load replay</button></form>
@@ -134,6 +136,7 @@ export function ReplayApp() {
       <section className="replay-main" aria-label="Kitchen replay">
         <section className="scene-panel" aria-label="3D kitchen replay" data-testid="kitchen-scene"
           data-time={frame.time} data-sequence={frame.sequence} data-station={frame.chef.station}
+          data-chefs={frame.chefs.map((chef) => `${chef.name}:${chef.station}:${chef.motion}`).join(',')}
           data-motion={frame.chef.motion} data-heated={frame.stations.filter((s) => s.heated).map((s) => s.station).join(',')}>
           <div className="scene-toolbar"><span>LIVE REPLAY / 3D KITCHEN</span>
             <div className="scene-cameras" role="group" aria-label="3D camera">
@@ -143,8 +146,8 @@ export function ReplayApp() {
           <div className="scene-viewport"><SceneBoundary><Suspense fallback={<p className="scene-unavailable">Loading the restaurant…</p>}>
             <RestaurantScene cameraPreset={camera} replayFrame={frame} />
           </Suspense></SceneBoundary></div>
-          <div className="scene-caption" data-testid="scene-activity"><span><strong>Chef · {frame.chef.station}</strong>
-            {' / '}{humanize(frame.chef.taskId ?? frame.chef.motion)}{frame.chef.orderId ? ` · ${frame.chef.orderId}` : ''}</span>
+          <div className="scene-caption" data-testid="scene-activity"><span>{frame.chefs.map((chef, index) => <span key={chef.name}>{index > 0 && ' · '}<strong>{frame.chefs.length === 1 ? 'Chef' : humanize(chef.name)} · {chef.station}</strong>
+            {' / '}{humanize(chef.taskId ?? chef.motion)}{chef.orderId ? ` · ${chef.orderId}` : ''}</span>)}</span>
             <span>{frame.stations.filter((s) => s.heated).map((s) => `${s.station}: heating + steam`).join(' · ') || 'Heating off'}
               {frame.served.length > 0 ? ` · Pass: ${frame.served.length} served` : ''}</span></div>
         </section>
@@ -187,9 +190,9 @@ export function ReplayApp() {
         <div className="status-grid"><div className="panel"><h2>Current tasks</h2>
           {!state?.running_tasks.length ? <p className="empty">Chef and equipment are idle.</p> : state.running_tasks.map((task) => <div className="task" key={`${task.order_id}/${task.task_id}`}>
             <strong>{humanize(task.task_id)}</strong><p>{task.order_id} · {Math.ceil(task.remaining_time)}s remaining</p>
-            <small>{task.resources.includes('chef') ? 'Chef working' : 'Background cooking'} · {task.resources.join(', ')}</small></div>)}
+            <small>{task.resources.some(isChefResource) ? 'Chef working' : 'Background cooking'} · {task.resources.join(', ')}</small></div>)}
         </div><div className="panel"><h2>Equipment</h2><dl className="equipment">
-          {Object.entries(state?.resources ?? { chef: null, burner: null, pot: null, pan: null }).map(([name, owner]) =>
+          {Object.entries(state?.resources ?? idleResources(idleChefs)).map(([name, owner]) =>
             <div key={name}><dt>{name}</dt><dd><span className={`dot ${owner ? 'occupied' : ''}`} />
               {owner ? `${owner[0]} · ${humanize(owner[1])}` : 'Available'}</dd></div>)}
         </dl></div></div>

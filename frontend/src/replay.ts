@@ -28,7 +28,7 @@ export interface ReplayState {
 interface EventBase { sequence: number; time: number; ok: boolean }
 export type ReplayEvent = EventBase & (
   | { action: 'order_accepted'; order_id: string; menu: string; deadline: number }
-  | { action: 'task_started'; order_id: string; task_id: string; finishes_at: number }
+  | { action: 'task_started'; order_id: string; task_id: string; finishes_at: number; chef?: string }
   | { action: 'tasks_completed'; completed: { order_id: string; task_id: string }[] }
   | { action: 'order_served'; order_id: string; on_time: boolean }
   | { action: 'time_advanced' }
@@ -89,9 +89,11 @@ export function replayAt(replay: Replay, time: number, sequence = Infinity): Rep
         const hold = tasks.find((t) => t.id === owner[1])?.holds;
         if (hold?.until === task.id && hold.resources.includes(resource)) state.resources[resource] = null;
       }
+      // Recipes say "chef" for any one free chef; with several, the event names the assigned one.
+      const resources = task.resources.map((resource) => resource === 'chef' ? event.chef ?? resource : resource);
       state.running_tasks.push({ order_id: order.id, task_id: task.id, finishes_at: event.finishes_at,
-        resources: [...task.resources], remaining_time: event.finishes_at - event.time });
-      for (const resource of task.resources) state.resources[resource] = [order.id, task.id];
+        resources, remaining_time: event.finishes_at - event.time });
+      for (const resource of resources) state.resources[resource] = [order.id, task.id];
     } else if (event.action === 'tasks_completed') {
       for (const completed of event.completed) {
         const order = state.orders.find((o) => o.id === completed.order_id)!;

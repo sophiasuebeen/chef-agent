@@ -16,7 +16,7 @@ need no API key. Agent comparison uses the configured provider and credentials.
 | Method and path | Body | Success | Errors |
 | --- | --- | --- | --- |
 | `GET /menus` | none | `200` registered usable recipes: `[{"id":"lemon_pasta","name":"Lemon Pasta","ingredients":[...]},{"id":"seafood_tomato","name":"Seafood Tomato Pasta","ingredients":[...]}]` | |
-| `POST /runs` | none | `201` `{"run_id": "..."}` | |
+| `POST /runs` | optional `{"chefs": 2}` | `201` `{"run_id": "..."}` | `422` invalid `chefs` |
 | `POST /runs/{run_id}/orders` | `{"menu": "lemon_pasta", "time_limit": 900}` | `201` the order | `400` unparsable body, `404` unknown run, `409` already executed, `422` invalid body, menu, or `time_limit` |
 | `GET /runs/{run_id}/orders/{order_id}` | none | `200` the order, including once served | `404` unknown run or order |
 | `GET /runs/{run_id}/state` | none | `200` the `build_observation()` result | `404` unknown run |
@@ -30,6 +30,10 @@ run, so an invalid body on an unknown run returns `400` or `422`, not `404`.
 
 `served_at` and `on_time` are `null` until the order is served. The `orders` list
 in `state` omits served orders, so use the order endpoint to read their results.
+
+`chefs` is a JSON integer from 1 to 4, default 1. Resources then include `chef_2` ...
+`chef_N`, running tasks list the assigned chef, and `task_started` events for chef tasks
+carry a `chef` field when there is more than one. One-chef documents do not change.
 
 Accepting an order records it as `pending` without advancing time. Execute after
 adding all orders. Order intake after execution returns `409`.
@@ -128,20 +132,22 @@ orders can arrive while cooking, and the priority scheduler dispatches them on i
 
 | Method and path | Body | Success | Errors |
 | --- | --- | --- | --- |
-| `POST /sessions` | optional `{"speed": 10}` | `201` `{"session_id": "...", "speed": 10}` | `422` |
+| `POST /sessions` | optional `{"speed": 10, "chefs": 1}` | `201` `{"session_id": "...", "speed": 10}` | `422` |
 | `POST /sessions/{id}/orders` | `{"menu": "lemon_pasta", "time_limit": 900, "quantity": 1}` | `201` `{"time": 200, "orders": [...]}` | `400`, `404`, `422` |
 | `POST /sessions/{id}/chef-hold` | `{"seconds": 60}` | `200` hold status | `400`, `404`, `422` |
 | `DELETE /sessions/{id}/chef-hold` | none | `200` hold status | `404` |
 | `GET /sessions/{id}/state` | none | `200` time, idle, chef hold, all orders, resources, running tasks | `404` |
 | `GET /sessions/{id}/events?after=0` | none | `200` server-sent simulator events | `404`, `422` |
 
-`speed` is simulated seconds per real second, from above 0 to 1000. `quantity` is 1 to 20;
+`speed` is simulated seconds per real second, from above 0 to 1000. `chefs` is as for runs.
+`quantity` is 1 to 20;
 plates in one request are ranked together. Each event's `id` and `sequence` is its 1-based
 position. Reconnect with `?after=` or `Last-Event-ID` to skip events already seen. The stream
 stays open while the session exists, so clients close it themselves.
 
-A chef hold reserves the chef for a customer, in simulated seconds from 1 to 3600. Running work
-is never interrupted, so the hold starts when the chef is next free, before any new hand work.
+A chef hold reserves one chef for a customer, in simulated seconds from 1 to 3600. Running work
+is never interrupted, so the hold starts when a chef is next free, before any new hand work.
+Other chefs keep cooking.
 Background cooking and deadlines continue, and a dish waiting for the chef keeps its equipment.
 Another request during a hold can only extend it. Hold status is `none`, `waiting` or `active`.
 

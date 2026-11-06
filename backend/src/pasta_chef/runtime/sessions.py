@@ -11,7 +11,7 @@ import json
 import time
 from uuid import uuid4
 
-from pasta_chef.simulation.kitchen import Kitchen
+from pasta_chef.simulation.kitchen import Kitchen, free_chef
 from pasta_chef.simulation.recipes import load_recipe
 from pasta_chef.simulation.scheduler import Dispatcher
 
@@ -19,8 +19,8 @@ from pasta_chef.simulation.scheduler import Dispatcher
 class LiveKitchen:
     """Dispatch up to a given simulated time. Knows nothing about real time."""
 
-    def __init__(self, *, rule=None, ema=None, duration_sampler=None):
-        self.kitchen = Kitchen(duration_sampler=duration_sampler)
+    def __init__(self, *, rule=None, ema=None, duration_sampler=None, chefs=1):
+        self.kitchen = Kitchen(duration_sampler=duration_sampler, chefs=chefs)
         self.dispatcher = Dispatcher(self.kitchen, rule=rule, ema=ema)
         self.now = 0
         self._hold_wanted = None  # Seconds, once the chef is free.
@@ -32,7 +32,7 @@ class LiveKitchen:
         if self._hold_until is not None and state.time >= self._hold_until:
             self.kitchen.release_chef()
             self._hold_until = None
-        if self._hold_wanted is not None and state.resources["chef"] is None:
+        if self._hold_wanted is not None and free_chef(state) is not None:
             self.kitchen.hold_chef()
             self._hold_until = state.time + self._hold_wanted
             self._hold_wanted = None
@@ -174,9 +174,9 @@ class SessionStore:
         self._clock = clock
         self._sessions = {}
 
-    def create(self, speed):
+    def create(self, speed, chefs=1):
         session_id = uuid4().hex
-        self._sessions[session_id] = LiveSession(speed=speed, clock=self._clock)
+        self._sessions[session_id] = LiveSession(speed=speed, clock=self._clock, chefs=chefs)
         return session_id
 
     def get(self, session_id):

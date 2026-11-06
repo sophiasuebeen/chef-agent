@@ -12,10 +12,12 @@ const dishAsset = (menu: string) => menu === 'seafood_tomato' ? 'food.seafoodTom
 
 export function KitchenReplay({ frame = EMPTY }: { frame?: KitchenFrame }) {
   return <group name="replay.kitchen">
-    <Chef activity={frame.chef} time={frame.time} />
+    {frame.chefs.map((chef, index) => <Chef key={chef.name} activity={chef} index={index} time={frame.time} />)}
     {stations.filter((station) => station.type !== 'dish').map((station) => {
-      const activity = frame.stations.find((candidate) => candidate.station === station.type);
-      const isChef = frame.chef.station === station.type && frame.chef.motion !== 'idle';
+      const activities = frame.stations.filter((candidate) => candidate.station === station.type);
+      const activity = activities[0];
+      const orderCount = new Set(activities.map((a) => a.orderId)).size;
+      const isChef = frame.chefs.some((chef) => chef.station === station.type && chef.motion !== 'idle');
       // Put work on the accessible edge of the existing counter, facing its chef spot.
       const edge = station.position[2] < station.chefSpot[2] ? 0.23 : -0.20;
       return <group key={station.id} position={[station.position[0], KITCHEN.counterHeight + 0.003, station.position[2] + edge]}>
@@ -39,7 +41,7 @@ export function KitchenReplay({ frame = EMPTY }: { frame?: KitchenFrame }) {
         </group>)}
         {station.type !== 'pass' && <Html position={[0, 0.10, station.type === 'plating' ? 0.20 : -0.17]} center zIndexRange={[8, 0]}>
           <span className={`station-tag ${activity || isChef ? 'active' : ''}`}>
-            {station.type}{activity ? ` · ${activity.orderId}` : ''}{activity?.heated ? ' · heat' : ''}
+            {station.type}{activity ? ` · ${activity.orderId}` : ''}{orderCount > 1 ? ` +${orderCount - 1}` : ''}{activity?.heated ? ' · heat' : ''}
           </span>
         </Html>}
         {(activity || isChef) && <mesh position={[0, -0.002, edge > 0 ? 0.17 : -0.17]}>

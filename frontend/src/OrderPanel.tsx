@@ -1,6 +1,9 @@
 import { useEffect, useState, type FormEvent } from 'react';
 import type { CartItem, Menu } from './ordering';
-export function OrderPanel({ busy, onCook }: { busy: boolean; onCook: (cart: CartItem[], policy: string, maxSimulatedTime: number) => void }) {
+export function OrderPanel({ busy, chefs, onChefsChange, onCook }: {
+  busy: boolean; chefs: number; onChefsChange: (chefs: number) => void;
+  onCook: (cart: CartItem[], policy: string, maxSimulatedTime: number, chefs: number) => void;
+}) {
   const [menus, setMenus] = useState<Menu[]>([]), [cart, setCart] = useState<CartItem[]>([]);
   const [loading, setLoading] = useState(true), [error, setError] = useState('');
   const [attempt, setAttempt] = useState(0), [policy, setPolicy] = useState('scripted');
@@ -17,7 +20,7 @@ export function OrderPanel({ busy, onCook }: { busy: boolean; onCook: (cart: Car
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
   }, [attempt]);
-  function submit(event: FormEvent) { event.preventDefault(); if (!busy && cart.length) onCook(cart, policy, maxSimulatedTime); }
+  function submit(event: FormEvent) { event.preventDefault(); if (!busy && cart.length) onCook(cart, policy, maxSimulatedTime, chefs); }
 
   return <>
     <h2>메뉴 선택</h2>
@@ -46,6 +49,8 @@ export function OrderPanel({ busy, onCook }: { busy: boolean; onCook: (cart: Car
       <label>실행 모드<select value={policy} disabled={busy} onChange={(event) => setPolicy(event.target.value)}>
         <option value="scripted">Scripted baseline</option><option value="priority">Priority · earliest deadline</option><option value="agent">LLM chef · comparison</option>
       </select></label>
+      <label>셰프 수<input type="number" min="1" max="4" step="1" required disabled={busy}
+        value={Number.isNaN(chefs) ? '' : chefs} onChange={(event) => onChefsChange(event.target.valueAsNumber)} /></label>
       <label>전체 실행 제한 시간 (simulated seconds)<input type="number" min="1" max="86400" step="1" required disabled={busy}
         value={Number.isNaN(maxSimulatedTime) ? '' : maxSimulatedTime}
         onChange={(event) => setMaxSimulatedTime(event.target.valueAsNumber)} /></label>

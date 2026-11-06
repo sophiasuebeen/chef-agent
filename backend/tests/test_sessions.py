@@ -258,6 +258,32 @@ class LiveChefHoldTests(unittest.TestCase):
             return live.kitchen.state.events
         self.assertEqual(run(1), run(1000))
 
+    def test_other_chefs_keep_cooking_during_a_hold(self):
+        live = LiveKitchen(chefs=2)
+        order = live.add_orders(0, [("lemon_pasta", 900)])[0]
+        live.hold_chef(25, 5000)  # Both chefs are busy until 40: mint and garlic.
+        self.assertEqual(live.chef_hold["status"], "waiting")
+        live.advance_to(40)
+        state = live.kitchen.state
+        held = next(name for name in ("chef", "chef_2") if state.resources[name] == ("customer", "chat"))
+        self.assertEqual(live.chef_hold["status"], "active")
+        self.assertEqual(self.actions(live, "chef_held"), [("chef_held", 40)])
+        self.assertEqual(next(e["chef"] for e in state.events if e["action"] == "chef_held"), held)
+        live.advance_to(4000)
+        self.assertEqual(order.status, "served")
+        self.assertEqual(state.resources[held], ("customer", "chat"))
+        live.release_chef(4000)
+        self.assertEqual(self.actions(live, "chef_released"), [("chef_released", 4000)])
+        self.assertTrue(all(owner is None for owner in state.resources.values()))
+
+    def test_a_hold_waits_until_some_chef_is_free(self):
+        live = LiveKitchen(chefs=2)
+        live.add_orders(0, [("lemon_pasta", 900)] * 2)  # Both chefs collect ingredients until 20.
+        live.hold_chef(5, 30)
+        self.assertEqual(live.chef_hold["status"], "waiting")
+        live.advance_to(20)
+        self.assertEqual(self.actions(live, "chef_held"), [("chef_held", 20)])
+
     def test_invalid_holds_change_nothing(self):
         live = self.order_then_hold(60)
         live.advance_to(50)

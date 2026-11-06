@@ -7,7 +7,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field, StrictInt
 
 from pasta_chef.api.errors import error_responses, safe_text
-from pasta_chef.api.schemas import OrderCreate, OrderResponse, RunningTaskResponse
+from pasta_chef.api.schemas import ChefCount, OrderCreate, OrderResponse, RunningTaskResponse
 from pasta_chef.runtime.sessions import LiveSession, event_stream
 
 router = APIRouter()
@@ -17,6 +17,7 @@ class SessionCreate(BaseModel):
     model_config = ConfigDict(extra="forbid")
     speed: Annotated[float, Field(gt=0, le=1000, allow_inf_nan=False,
                                   description="Simulated seconds per real second.")] = 10
+    chefs: ChefCount = 1
 
 
 class SessionCreated(BaseModel):
@@ -69,7 +70,7 @@ Session = Annotated[LiveSession, Depends(get_session)]
 async def create_session(request: Request,
                          body: Annotated[SessionCreate, Body()] = SessionCreate()) -> dict:
     """Start a kitchen whose clock runs from now."""
-    return dict(session_id=request.app.state.sessions.create(body.speed), speed=body.speed)
+    return dict(session_id=request.app.state.sessions.create(body.speed, body.chefs), speed=body.speed)
 
 
 @router.post("/sessions/{session_id}/orders", status_code=status.HTTP_201_CREATED,

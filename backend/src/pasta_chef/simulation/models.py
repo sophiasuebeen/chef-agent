@@ -29,6 +29,7 @@ class KitchenState:
     orders: dict[str, Order] = field(default_factory=dict)
     next_order_number: int = 1
     running_tasks: list[RunningTask] = field(default_factory=list)
+    # Owners are usually (order_id, task_id), but not every owner is a real order.
     resources: dict[str, tuple[str, str] | None] = field(
         default_factory=lambda: dict.fromkeys(("chef", "burner", "pot", "pan"))
     )

@@ -3,7 +3,7 @@ from typing import Annotated
 from fastapi import APIRouter, Body, Depends, HTTPException, Request, status
 
 from pasta_chef.api.errors import error_responses
-from pasta_chef.api.schemas import ExecuteRequest, ReplayResponse, RunCreated, StateResponse
+from pasta_chef.api.schemas import ExecuteRequest, ReplayResponse, RunCreate, RunCreated, StateResponse
 from pasta_chef.api.events import execute
 from pasta_chef.api.store import Run, get_run
 from pasta_chef.simulation.observation import build_observation
@@ -11,10 +11,11 @@ from pasta_chef.simulation.observation import build_observation
 router = APIRouter()
 
 
-@router.post("/runs", status_code=status.HTTP_201_CREATED, response_model=RunCreated)
-def create_run(request: Request) -> dict:
+@router.post("/runs", status_code=status.HTTP_201_CREATED, response_model=RunCreated,
+             responses=error_responses(422))
+def create_run(request: Request, body: Annotated[RunCreate, Body()] = RunCreate()) -> dict:
     """Create an independent, empty kitchen. Runs are lost when the server restarts."""
-    return {"run_id": request.app.state.runs.create()}
+    return {"run_id": request.app.state.runs.create(body.chefs)}
 
 
 @router.get("/runs/{run_id}/state", response_model=StateResponse,

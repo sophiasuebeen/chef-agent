@@ -3,6 +3,18 @@ from copy import deepcopy
 from .models import KitchenState, Order, RunningTask
 from .recipes import get_task, load_recipe
 
+MAX_CHEFS = 4
+
+
+def chef_names(state: KitchenState) -> list[str]:
+    """Every chef resource, in order: chef, chef_2, ..."""
+    return [name for name in state.resources if name == "chef" or name.startswith("chef_")]
+
+
+def free_chef(state: KitchenState) -> str | None:
+    """The first unowned chef, or None. Owners are not always orders: see KitchenState."""
+    return next((name for name in chef_names(state) if state.resources[name] is None), None)
+
 
 # Resource owner while the chef talks with a customer. Order IDs never take this form.
 CUSTOMER_CHAT = ("customer", "chat")
@@ -42,6 +54,10 @@ def validate_task(state: KitchenState, order_id: str, task_id: str) -> dict:
         raise ValueError("Task duration must be a positive integer.")
     held = _held_for(state, order_id, task_id)
     for resource in task["resources"]:
+        if resource == "chef":  # In a recipe, "chef" means any one free chef.
+            if free_chef(state) is None:
+                raise ValueError("Resource unavailable: chef")
+            continue
         if resource not in state.resources:
             raise ValueError(f"Unknown resource: {resource}")
         if state.resources[resource] is not None and resource not in held:
@@ -50,13 +66,17 @@ def validate_task(state: KitchenState, order_id: str, task_id: str) -> dict:
 
 
 class Kitchen:
-    def __init__(self, *, duration_sampler=None):
-        self.state = KitchenState()
+    def __init__(self, *, duration_sampler=None, chefs=1):
+        if type(chefs) is not int or not 1 <= chefs <= MAX_CHEFS:
+            raise ValueError(f"Chefs must be an integer from 1 to {MAX_CHEFS}.")
+        self.chefs = chefs
+        self.reset()
         # Optional simulation-only uncertainty; planned recipe data stays intact.
         self.duration_sampler = duration_sampler
 
     def reset(self) -> None:
-        self.state = KitchenState()
+        extra = [f"chef_{number}" for number in range(2, self.chefs + 1)]
+        self.state = KitchenState(resources=dict.fromkeys(("chef", *extra, "burner", "pot", "pan")))
 
     def _record(self, result: dict) -> dict:
         self.state.events.append(dict(deepcopy(result), sequence=len(self.state.events) + 1))
@@ -94,8 +114,9 @@ class Kitchen:
             deepcopy(self.state.orders[order_id]), deepcopy(task))
         if type(duration) is not int or duration <= 0:
             raise ValueError("Sampled duration must be a positive integer.")
+        chef = free_chef(self.state) if "chef" in task["resources"] else None
         running = RunningTask(order_id, task_id, self.state.time + duration,
-                              list(task["resources"]))
+                              [chef if r == "chef" else r for r in task["resources"]])
         # A held resource this step does not use (the burner once draining starts) is now free.
         for resource in _held_for(self.state, order_id, task_id):
             self.state.resources[resource] = None
@@ -103,9 +124,11 @@ class Kitchen:
             self.state.resources[resource] = (order_id, task_id)
         self.state.running_tasks.append(running)
         self.state.orders[order_id].status = "cooking"
-        return self._record(dict(ok=True, action="task_started", time=self.state.time,
-                                 order_id=order_id, task_id=task_id,
-                                 finishes_at=running.finishes_at))
+        result = dict(ok=True, action="task_started", time=self.state.time,
+                      order_id=order_id, task_id=task_id, finishes_at=running.finishes_at)
+        if chef is not None and self.chefs > 1:
+            result["chef"] = chef
+        return self._record(result)
 
     def advance_to_next_event(self, *, until: int | None = None) -> dict:
         """Optionally stop at an external arrival or episode time boundary."""
@@ -151,13 +174,16 @@ class Kitchen:
 
     def hold_chef(self) -> dict:
         """Reserve a free chef for a customer. Background cooking and deadlines keep running."""
-        if self.state.resources["chef"] is not None:
+        chef = free_chef(self.state)
+        if chef is None:
             raise ValueError("Resource unavailable: chef")
-        self.state.resources["chef"] = CUSTOMER_CHAT
-        return self._record(dict(ok=True, action="chef_held", time=self.state.time, chef="chef"))
+        self.state.resources[chef] = CUSTOMER_CHAT
+        return self._record(dict(ok=True, action="chef_held", time=self.state.time, chef=chef))
 
     def release_chef(self) -> dict:
-        if self.state.resources["chef"] != CUSTOMER_CHAT:
+        chef = next((name for name in chef_names(self.state)
+                     if self.state.resources[name] == CUSTOMER_CHAT), None)
+        if chef is None:
             raise ValueError("Chef is not held for a customer.")
-        self.state.resources["chef"] = None
-        return self._record(dict(ok=True, action="chef_released", time=self.state.time, chef="chef"))
+        self.state.resources[chef] = None
+        return self._record(dict(ok=True, action="chef_released", time=self.state.time, chef=chef))
