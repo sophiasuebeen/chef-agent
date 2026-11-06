@@ -30,8 +30,10 @@ def validate_task(state: KitchenState, order_id: str, task_id: str) -> dict:
 
 
 class Kitchen:
-    def __init__(self):
+    def __init__(self, *, duration_sampler=None):
         self.state = KitchenState()
+        # Optional simulation-only uncertainty; planned recipe data stays intact.
+        self.duration_sampler = duration_sampler
 
     def reset(self) -> None:
         self.state = KitchenState()
@@ -68,7 +70,11 @@ class Kitchen:
 
     def start_task(self, order_id: str, task_id: str) -> dict:
         task = self.validate_task(order_id, task_id)
-        running = RunningTask(order_id, task_id, self.state.time + task["duration"],
+        duration = task["duration"] if self.duration_sampler is None else self.duration_sampler(
+            deepcopy(self.state.orders[order_id]), deepcopy(task))
+        if type(duration) is not int or duration <= 0:
+            raise ValueError("Sampled duration must be a positive integer.")
+        running = RunningTask(order_id, task_id, self.state.time + duration,
                               list(task["resources"]))
         for resource in running.resources:
             self.state.resources[resource] = (order_id, task_id)
@@ -78,7 +84,16 @@ class Kitchen:
                                  order_id=order_id, task_id=task_id,
                                  finishes_at=running.finishes_at))
 
-    def advance_to_next_event(self) -> dict:
+    def advance_to_next_event(self, *, until: int | None = None) -> dict:
+        """Optionally stop at an external arrival or episode time boundary."""
+        if until is not None and (type(until) is not int or until < self.state.time):
+            raise ValueError("until must be an integer at or after current time.")
+        next_time = min((t.finishes_at for t in self.state.running_tasks), default=None)
+        if until is not None and (next_time is None or until < next_time):
+            if until == self.state.time:
+                return dict(ok=True, action="no_op", time=self.state.time, completed=[])
+            self.state.time = until
+            return self._record(dict(ok=True, action="time_advanced", time=until))
         if not self.state.running_tasks:
             return dict(ok=True, action="no_op", time=self.state.time, completed=[])
         self.state.time = min(t.finishes_at for t in self.state.running_tasks)
