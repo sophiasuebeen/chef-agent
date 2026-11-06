@@ -58,8 +58,10 @@ ValueError. Recipe durations must be positive integers and resources known.
 
 With running tasks, advance to the earliest finishes_at, complete ALL tasks at
 that timestamp in running_tasks insertion order, append their IDs to their
-own orders, release only resources owned by each finishing task, and remove
-those running tasks. Return exactly (completed can have multiple entries):
+own orders, release only resources owned by each finishing task except those
+named in the task's `holds`, and remove those running tasks. Held resources stay
+reserved for that order until `holds.until` starts; that start takes over the ones
+it lists and frees the rest. Return exactly (completed can have multiple entries):
 
 ```json
 {"ok": true, "action": "tasks_completed", "time": 20,

@@ -10,6 +10,7 @@ import json
 import logging
 import os
 from pathlib import Path
+import random
 from tempfile import TemporaryDirectory
 import unittest
 from unittest.mock import patch
@@ -19,6 +20,8 @@ from pasta_chef.config import Settings
 from pasta_chef.runtime.progress import EpisodeProgress, enable_progress_logs
 from pasta_chef.simulation.kitchen import Kitchen
 from pasta_chef.simulation.observation import build_observation
+from pasta_chef.simulation.recipes import load_recipe
+from pasta_chef.simulation.scheduler import run_priority_episode
 from scripts.run_local import run_scripted
 
 try:
@@ -639,6 +642,113 @@ class LiteLlmPathTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(request["num_retries"], 0)
             self.assertEqual(json.dumps(request["messages"]).count("available_tasks"), 1)
         self.assertTrue(any(m["role"] == "tool" for m in requests[-1]["messages"]))
+
+
+class EquipmentHoldTests(unittest.TestCase):
+    """Cooked pasta stays in the pot, and sauce in the pan, until the next step takes over."""
+
+    def setUp(self):
+        self.kitchen = Kitchen()
+        self.first = self.kitchen.add_order("lemon_pasta", 900)
+        self.second = self.kitchen.add_order("lemon_pasta", 900)
+
+    def run_first_through(self, *tasks):
+        """Start each task of the first order and advance until it completes."""
+        for task in tasks:
+            self.kitchen.start_task(self.first.id, task)
+            while task not in self.first.completed_tasks:
+                self.kitchen.advance_to_next_event()
+
+    def ready_second_for_boil(self):
+        self.kitchen.start_task(self.second.id, "collect_ingredients")
+        self.kitchen.advance_to_next_event()
+
+    def assert_rejected(self, order, task, resource):
+        before = deepcopy(self.kitchen.state)
+        with self.assertRaisesRegex(ValueError, f"Resource unavailable: {resource}"):
+            self.kitchen.start_task(order.id, task)
+        self.assertEqual(self.kitchen.state, before)
+
+    def test_another_order_cannot_take_the_pot_between_boiling_and_cooking(self):
+        self.ready_second_for_boil()
+        self.run_first_through("collect_ingredients", "boil_water")
+        self.assertEqual(self.kitchen.state.resources["pot"], (self.first.id, "boil_water"))
+        self.assert_rejected(self.second, "boil_water", "pot|burner")
+        self.kitchen.start_task(self.first.id, "cook_pasta_halfway")
+        self.assertEqual(self.kitchen.state.resources["pot"], (self.first.id, "cook_pasta_halfway"))
+
+    def test_cooked_pasta_keeps_the_pot_until_drained_then_burner_frees_at_drain_start(self):
+        self.ready_second_for_boil()
+        self.run_first_through("collect_ingredients", "boil_water", "cook_pasta_halfway")
+        self.assertEqual(self.kitchen.state.resources["pot"], (self.first.id, "cook_pasta_halfway"))
+        self.assertEqual(self.kitchen.state.resources["burner"], (self.first.id, "cook_pasta_halfway"))
+        self.assertNotIn("boil_water", build_observation(self.kitchen.state)["available_tasks"][self.second.id])
+        self.assert_rejected(self.second, "boil_water", "pot|burner")
+
+        self.kitchen.start_task(self.first.id, "reserve_water_and_drain")
+        self.assertEqual(self.kitchen.state.resources["pot"], (self.first.id, "reserve_water_and_drain"))
+        self.assertIsNone(self.kitchen.state.resources["burner"])
+        self.kitchen.advance_to_next_event()
+        self.assertIsNone(self.kitchen.state.resources["pot"])
+
+    def test_sauce_keeps_the_pan_and_only_finishing_off_heat_frees_the_burner(self):
+        self.run_first_through("collect_ingredients", "prepare_mint", "crush_garlic", "boil_water",
+                               "cook_pasta_halfway", "reserve_water_and_drain", "prepare_sauce")
+        self.assertEqual(self.kitchen.state.resources["pan"], (self.first.id, "prepare_sauce"))
+        self.assertEqual(self.kitchen.state.resources["burner"], (self.first.id, "prepare_sauce"))
+        self.run_first_through("finish_pasta")
+        self.assertEqual(self.kitchen.state.resources["pan"], (self.first.id, "finish_pasta"))
+        self.assertIsNone(self.kitchen.state.resources["burner"])
+        self.run_first_through("finish_off_heat")
+        self.assertIsNone(self.kitchen.state.resources["pan"])
+        self.kitchen.serve_order(self.first.id)
+        self.assertTrue(all(owner is None for owner in self.kitchen.state.resources.values()))
+
+    def test_a_hold_only_serves_its_named_next_step(self):
+        self.run_first_through("collect_ingredients", "crush_garlic", "boil_water")
+        before = deepcopy(self.kitchen.state)
+        self.assertEqual(self.kitchen.state.resources["burner"], (self.first.id, "boil_water"))
+        with self.assertRaisesRegex(ValueError, "dependencies"):
+            self.kitchen.start_task(self.first.id, "prepare_sauce")
+        self.assertEqual(self.kitchen.state, before)
+
+    def test_recipe_holds_are_consistent(self):
+        recipe = load_recipe("lemon_pasta")
+        tasks = {task["id"]: task for task in recipe["tasks"]}
+        holders = [task for task in recipe["tasks"] if "holds" in task]
+        self.assertEqual({task["id"] for task in holders},
+                         {"boil_water", "cook_pasta_halfway", "prepare_sauce", "finish_pasta"})
+        for task in holders:
+            self.assertTrue(set(task["holds"]["resources"]) <= set(task["resources"]), task["id"])
+            self.assertIn(task["id"], tasks[task["holds"]["until"]]["requires"])
+
+    def test_any_legal_action_order_finishes_without_deadlock(self):
+        rng = random.Random(7)
+        for episode in range(200):
+            kitchen = Kitchen()
+            orders = [kitchen.add_order("lemon_pasta", 900) for _ in range(rng.randint(1, 5))]
+            while any(order.status != "served" for order in orders):
+                for order in orders:
+                    if order.status != "served" and "finish_off_heat" in order.completed_tasks:
+                        kitchen.serve_order(order.id)
+                available = [(order_id, task) for order_id, tasks
+                             in build_observation(kitchen.state)["available_tasks"].items() for task in tasks]
+                # Waiting while work is running is legal too, so explore it sometimes.
+                if available and (not kitchen.state.running_tasks or rng.random() < 0.8):
+                    kitchen.start_task(*rng.choice(available))
+                elif kitchen.state.running_tasks:
+                    kitchen.advance_to_next_event()
+                else:
+                    self.assertTrue(all(order.status == "served" for order in orders),
+                                    f"Deadlock in episode {episode}: {kitchen.state.resources}")
+            self.assertTrue(all(owner is None for owner in kitchen.state.resources.values()))
+
+    def test_priority_drains_immediately_instead_of_reusing_a_full_pot(self):
+        run_priority_episode(self.kitchen)
+        starts = {(e["order_id"], e["task_id"]): e["time"] for e in self.kitchen.state.events
+                  if e["action"] == "task_started"}
+        self.assertEqual(starts[(self.first.id, "reserve_water_and_drain")], 380)
+        self.assertGreaterEqual(starts[(self.second.id, "boil_water")], 400)
 
 
 if __name__ == "__main__":

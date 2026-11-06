@@ -16,7 +16,7 @@ OPS = {ast.Add: operator.add, ast.Sub: operator.sub, ast.Mult: operator.mul,
 class PriorityRule:
     """A bounded arithmetic program, deliberately not arbitrary generated Python."""
     name: str = 'earliest_due_date'
-    expression: str = '-due + 0.001 * background'
+    expression: str = '-due - 0.001 * wkr + 0.00001 * background'
 
     def __post_init__(self):
         if not isinstance(self.name, str) or not self.name or len(self.name) > 100:

@@ -23,8 +23,11 @@ insertion order. Invalid arithmetic candidates are skipped; if none can score,
 the scheduler falls back to earliest deadline. Fallback selections remain logged.
 Resource/dependency rules belong exclusively to the simulator.
 
-The default rule is `-due + 0.001 * background`: prioritize the earliest absolute
-deadline, with a small preference for heating that does not need the chef.
+The default rule is `-due - 0.001 * wkr + 0.00001 * background`: prioritize the
+earliest absolute deadline. On equal deadlines, finish the order with the least
+remaining work, so a nearly done dish is not delayed to start another. Background
+heating only breaks ties within that. The weights assume a deadline gap of a second
+outweighs a recipe's `wkr`; a recipe with over 1000 seconds of work would need new ones.
 Rules are bounded arithmetic programs, not executable Python modules. Permitted
 operators are `+ - * /` and unary signs; no imports, calls, loops, attributes, or
 powers. This deliberately narrows the paper's unrestricted code-generation space.

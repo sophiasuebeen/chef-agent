@@ -4,6 +4,18 @@ from .models import KitchenState, Order, RunningTask
 from .recipes import get_task, load_recipe
 
 
+def _held_for(state: KitchenState, order_id: str, task_id: str) -> set[str]:
+    """Equipment this order kept from an earlier step, waiting for this task."""
+    recipe = load_recipe(state.orders[order_id].menu)
+    held = set()
+    for resource, owner in state.resources.items():
+        if owner and owner[0] == order_id:
+            hold = get_task(recipe, owner[1]).get("holds")
+            if hold and hold["until"] == task_id and resource in hold["resources"]:
+                held.add(resource)
+    return held
+
+
 def validate_task(state: KitchenState, order_id: str, task_id: str) -> dict:
     """Shared read-only validation used by actions and observations."""
     if order_id not in state.orders:
@@ -21,10 +33,11 @@ def validate_task(state: KitchenState, order_id: str, task_id: str) -> dict:
     duration = task["duration"]
     if type(duration) is not int or duration <= 0:
         raise ValueError("Task duration must be a positive integer.")
+    held = _held_for(state, order_id, task_id)
     for resource in task["resources"]:
         if resource not in state.resources:
             raise ValueError(f"Unknown resource: {resource}")
-        if state.resources[resource] is not None:
+        if state.resources[resource] is not None and resource not in held:
             raise ValueError(f"Resource unavailable: {resource}")
     return task
 
@@ -76,6 +89,9 @@ class Kitchen:
             raise ValueError("Sampled duration must be a positive integer.")
         running = RunningTask(order_id, task_id, self.state.time + duration,
                               list(task["resources"]))
+        # A held resource this step does not use (the burner once draining starts) is now free.
+        for resource in _held_for(self.state, order_id, task_id):
+            self.state.resources[resource] = None
         for resource in running.resources:
             self.state.resources[resource] = (order_id, task_id)
         self.state.running_tasks.append(running)
@@ -99,9 +115,12 @@ class Kitchen:
         self.state.time = min(t.finishes_at for t in self.state.running_tasks)
         finished = [t for t in self.state.running_tasks if t.finishes_at == self.state.time]
         for task in finished:
-            self.state.orders[task.order_id].completed_tasks.append(task.task_id)
+            order = self.state.orders[task.order_id]
+            order.completed_tasks.append(task.task_id)
+            hold = get_task(load_recipe(order.menu), task.task_id).get("holds")
+            kept = hold["resources"] if hold else ()
             for resource in task.resources:
-                if self.state.resources[resource] == (task.order_id, task.task_id):
+                if self.state.resources[resource] == (task.order_id, task.task_id) and resource not in kept:
                     self.state.resources[resource] = None
         self.state.running_tasks = [t for t in self.state.running_tasks if t not in finished]
         return self._record(dict(ok=True, action="tasks_completed", time=self.state.time,

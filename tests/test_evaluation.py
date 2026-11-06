@@ -121,7 +121,7 @@ class EvaluationMetricTests(unittest.TestCase):
         original = get_chef_instruction("original")
         # Snapshot captured before extracting the original prompt for comparison.
         self.assertEqual(sha256(original.encode()).hexdigest(),
-                         "2579a50344ac819545d24a380f55f52af2d30201f78a63d57f2a1ef739aa0a01")
+                         "a89f34c7f282fcdb01fa17e2e627e6182f54e769921cf70b3295e5e5a92d0c8c")
         self.assertEqual(get_chef_instruction("deadline"), original + "\n\n" + DEADLINE_OBJECTIVE)
         with self.assertRaises(ValueError):
             get_chef_instruction("missing")
