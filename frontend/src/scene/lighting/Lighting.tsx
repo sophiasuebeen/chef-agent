@@ -50,15 +50,15 @@ function sunPosition(preset: TimeOfDayPreset) {
 }
 
 /** 그림자를 드리우는 태양 하나와 하늘·바닥 반사광. 펜던트는 발광 재질만 쓴다. 값은 시간대 프리셋에서 온다. */
-export function Lighting() {
+export function Lighting({ shadowTime, shadowSequence, shadowChefs }: { shadowTime?: number; shadowSequence?: number; shadowChefs?: number }) {
   const target = useMemo(() => new Object3D(), []);
   const gl = useThree((state) => state.gl);
   const preset = useSceneStore((state) => timeOfDayPresets[state.timeOfDay]);
-  // 태양과 건물이 움직이지 않으므로 그림자는 배치가 바뀔 때만 다시 그린다.
+  // Static previews cache shadows; replay invalidates them only when simulated time changes.
   useEffect(() => {
     gl.shadowMap.autoUpdate = false;
     gl.shadowMap.needsUpdate = true;
-  }, [gl, preset]);
+  }, [gl, preset, shadowTime, shadowSequence, shadowChefs]);
 
   useEffect(() => {
     const generator = new PMREMGenerator(gl);

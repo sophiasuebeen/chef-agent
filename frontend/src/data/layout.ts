@@ -409,7 +409,8 @@ export const anchors: Anchor[] = [
 // ---------------------------------------------------------------------------
 
 /** 홀의 가로 통로 z. 각 값은 테이블 줄 사이의 빈 공간이다. */
-const CROSS_Z = { front: 1.4, mid: 4.7, back: 8, wall: 11.3 } as const;
+// Keep the wall aisle in front of the floor vases between the terrace doors.
+const CROSS_Z = { front: 1.4, mid: 4.7, back: 8, wall: 11.1 } as const;
 const TERRACE_AISLE_Z = 15.9;
 
 const waypointPositions: Record<string, [x: number, z: number]> = {

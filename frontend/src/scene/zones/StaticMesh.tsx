@@ -13,7 +13,7 @@ interface StaticMeshProps {
   castShadow?: boolean;
   /** false면 레이캐스트를 통과한다. 지붕 너머의 테이블을 위에서 클릭할 수 있게 한다. */
   blocksPointer?: boolean;
-  /** overview에서 안이 보이도록 그리지 않는다. 그림자는 계속 드리워 바닥의 창살 무늬가 유지된다. */
+  /** Overview and kitchen playback cameras cut roofs away while preserving shadows. */
   cutaway?: boolean;
 }
 
@@ -28,7 +28,7 @@ export function StaticMesh({
 }: StaticMeshProps) {
   const geometry = useMemo(() => boxProjectUVs(build()), [build]);
   const detailMode = useSceneStore((state) => state.debug.detailColorMode);
-  const isCut = useSceneStore((state) => cutaway && state.cameraPreset === 'overview');
+  const isCut = useSceneStore((state) => cutaway && ['overview', 'kitchen', 'chef'].includes(state.cameraPreset));
   const base = detailMode ? detailMaterial(tier) : palette[material];
   const hidden = useMemo(() => {
     const clone = base.clone();

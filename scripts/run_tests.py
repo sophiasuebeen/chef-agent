@@ -18,7 +18,7 @@ import warnings
 
 ROOT = Path(__file__).resolve().parent.parent
 SUITES = {
-    "tests": "Simulator, agent and evaluation",
+    "tests": "Simulator, host models and evaluation",
     "backend/tests": "API",
 }
 USE_COLOR = sys.stdout.isatty() and "NO_COLOR" not in os.environ

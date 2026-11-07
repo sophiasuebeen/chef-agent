@@ -1,6 +1,6 @@
 import type { Vec3 } from './layout';
 
-export const CAMERA_PRESET_IDS = ['overview', 'dining', 'terrace', 'kitchen'] as const;
+export const CAMERA_PRESET_IDS = ['overview', 'dining', 'terrace', 'kitchen', 'chef'] as const;
 export type CameraPresetId = (typeof CAMERA_PRESET_IDS)[number];
 
 export interface CameraPreset {
@@ -23,4 +23,5 @@ export const cameraPresets: Record<CameraPresetId, CameraPreset> = {
   terrace: { position: [-6.4, 1.3, 15.55], targetAnchorId: 'camTarget.terrace', fov: 38, focusDistance: 5 },
   // 평면도의 게임 카메라: 높이 4.7m, 픽업 존 뒤쪽에서 주방을 내려다본다 (가로 시야 약 90도).
   kitchen: { position: [0, 4.7, 2.7], targetAnchorId: 'camTarget.kitchen', fov: 58 },
+  chef: { position: [1.65, 2.3, -0.55], targetAnchorId: 'camTarget.kitchen', fov: 46 },
 };

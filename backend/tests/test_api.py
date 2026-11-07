@@ -19,7 +19,7 @@ LEMON = {"menu": "lemon_pasta", "time_limit": 900}
 
 
 def cook_and_serve(kitchen, order_id: str) -> None:
-    """Drive the simulator directly: the API has no cooking endpoints."""
+    """Drive the simulator directly to isolate order/state read contracts."""
     while True:
         available = build_observation(kitchen.state)["available_tasks"][order_id]
         if available:

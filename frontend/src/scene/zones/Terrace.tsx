@@ -66,7 +66,9 @@ const terracePlacements = [
   ...terraceDecor,
 ];
 
-export function Terrace() {
+const terraceGamePlacements = terracePlacements.filter((placement) => !placement.assetId.startsWith('food.'));
+
+export function Terrace({ showDemoFood = true }: { showDemoFood?: boolean }) {
   return (
     <group name="zone.terrace">
       <StaticMesh build={buildFloor} material="limestone" castShadow={false} />
@@ -75,7 +77,7 @@ export function Terrace() {
       {terraceTables.map((table) => (
         <TableSet key={table.id} table={table} />
       ))}
-      <PlacedAssets placements={terracePlacements} />
+      <PlacedAssets placements={showDemoFood ? terracePlacements : terraceGamePlacements} />
       <WarmLights placements={terraceWarmLights} />
     </group>
   );

@@ -1,6 +1,7 @@
 {
   "id": "lemon_pasta",
   "name": "Lemon Pasta",
+  "description": "Bright lemon and mint with butter and cheese. Tangy and buttery, with dairy ingredients and no seafood ingredients.",
   "ingredients": [
     "spaghetti",
     "water",
@@ -24,7 +25,8 @@
       "description": "Heat salted water in the pot.",
       "duration": 120,
       "requires": ["collect_ingredients"],
-      "resources": ["pot", "burner"]
+      "resources": ["pot", "burner"],
+      "holds": {"resources": ["pot", "burner"], "until": "cook_pasta_halfway"}
     },
     {
       "id": "prepare_mint",
@@ -45,7 +47,8 @@
       "description": "Add pasta and cook for half its total cooking time.",
       "duration": 240,
       "requires": ["boil_water"],
-      "resources": ["pot", "burner"]
+      "resources": ["pot", "burner"],
+      "holds": {"resources": ["pot", "burner"], "until": "reserve_water_and_drain"}
     },
     {
       "id": "reserve_water_and_drain",
@@ -59,14 +62,16 @@
       "description": "Heat butter and garlic in the pan, then add reserved pasta water.",
       "duration": 40,
       "requires": ["reserve_water_and_drain", "crush_garlic"],
-      "resources": ["chef", "pan", "burner"]
+      "resources": ["chef", "pan", "burner"],
+      "holds": {"resources": ["pan", "burner"], "until": "finish_pasta"}
     },
     {
       "id": "finish_pasta",
       "description": "Add pasta to the pan and finish cooking, stirring and adding pasta water.",
       "duration": 240,
       "requires": ["prepare_sauce"],
-      "resources": ["chef", "pan", "burner"]
+      "resources": ["chef", "pan", "burner"],
+      "holds": {"resources": ["pan"], "until": "finish_off_heat"}
     },
     {
       "id": "finish_off_heat",

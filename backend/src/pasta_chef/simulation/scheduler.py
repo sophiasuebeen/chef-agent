@@ -16,7 +16,7 @@ OPS = {ast.Add: operator.add, ast.Sub: operator.sub, ast.Mult: operator.mul,
 class PriorityRule:
     """A bounded arithmetic program, deliberately not arbitrary generated Python."""
     name: str = 'earliest_due_date'
-    expression: str = '-due + 0.001 * background'
+    expression: str = '-due - 0.001 * wkr + 0.00001 * background'
 
     def __post_init__(self):
         if not isinstance(self.name, str) or not self.name or len(self.name) > 100:
@@ -118,6 +118,75 @@ def task_features(kitchen, order, task, ema):
                 background=float('chef' not in task['resources']))
 
 
+class Dispatcher:
+    """Serve finished dishes and start ready work. Callers own time, limits and arrivals."""
+
+    def __init__(self, kitchen, *, rule=None, ema=None):
+        self.kitchen = kitchen
+        self.rule = rule if rule is not None else PriorityRule()
+        self.ema = ema if ema is not None else DurationEMA()
+        self.decisions = []
+        self.errors = 0
+        # Ingest existing logs, too, so repeated calls do not double-update the EMA.
+        self._cursor = len(kitchen.state.events)
+        self._starts = {(e['order_id'], e['task_id']): e['time'] for e in kitchen.state.events
+                        if e['action'] == 'task_started'}
+
+    def learn(self):
+        """Learn only after completion events, including simultaneous completions."""
+        events = self.kitchen.state.events
+        for event in events[self._cursor:]:
+            if event['action'] == 'task_started':
+                self._starts[(event['order_id'], event['task_id'])] = event['time']
+            elif event['action'] == 'tasks_completed':
+                for completed in event['completed']:
+                    owner = self.kitchen.get_order(completed['order_id'])
+                    task = next(t for t in load_recipe(owner.menu)['tasks']
+                                if t['id'] == completed['task_id'])
+                    self.ema.update(owner.menu, task,
+                                    event['time'] - self._starts[(owner.id, task['id'])])
+        self._cursor = len(events)
+
+    def serve_one(self):
+        for order in self.kitchen.state.orders.values():
+            if order.status != 'served' and set(load_recipe(order.menu)['completion_tasks']).issubset(order.completed_tasks):
+                self.kitchen.serve_order(order.id)
+                return True
+        return False
+
+    def start_one(self):
+        """Start the highest-scoring task that fits; False means nothing can start now."""
+        kitchen = self.kitchen
+        ranked, fallback = [], []
+        for order in kitchen.state.orders.values():
+            if order.status == 'served':
+                continue
+            for task in load_recipe(order.menu)['tasks']:
+                try:
+                    kitchen.validate_task(order.id, task['id'])
+                except (KeyError, ValueError):
+                    continue
+                features = task_features(kitchen, order, task, self.ema)
+                try:
+                    score = self.rule.score(features)
+                except (ArithmeticError, ValueError):
+                    self.errors += 1
+                    fallback.append((-order.deadline + 0.001 * features["background"],
+                                     order.id, task["id"], features))
+                    continue
+                ranked.append((score, order.id, task['id'], features))
+        # Stable insertion order breaks ties; every start revalidates all resources.
+        for score, order_id, task_id, features in sorted(ranked or fallback, key=lambda r: -r[0]):
+            try:
+                kitchen.start_task(order_id, task_id)
+            except (KeyError, ValueError):
+                continue
+            self.decisions.append(dict(time=kitchen.state.time, order_id=order_id,
+                                       task_id=task_id, score=score, features=features))
+            return True
+        return False
+
+
 def run_priority_episode(kitchen, *, rule=None, ema=None, arrivals=(),
                          max_actions=1000, max_simulated_time=1800):
     """Dispatch all compatible ready tasks before waiting; higher score wins.
@@ -125,8 +194,6 @@ def run_priority_episode(kitchen, *, rule=None, ema=None, arrivals=(),
     arrivals entries: {at: absolute seconds, menu: str, time_limit: positive int}.
     All pending input is validated before any kitchen mutation.
     """
-    rule = rule if rule is not None else PriorityRule()
-    ema = ema if ema is not None else DurationEMA()
     if type(max_actions) is not int or max_actions <= 0:
         raise ValueError('max_actions must be positive.')
     if type(max_simulated_time) is not int or max_simulated_time < kitchen.state.time:
@@ -138,30 +205,17 @@ def run_priority_episode(kitchen, *, rule=None, ema=None, arrivals=(),
         if type(arrival['time_limit']) is not int or arrival['time_limit'] <= 0:
             raise ValueError('Arrival time_limit must be positive.')
         load_recipe(arrival['menu'])
-    decisions = []
-    actions = errors = 0
-    # Ingest existing logs, too, so repeated calls do not double-update the EMA.
-    cursor = len(kitchen.state.events)
-    starts = {(e['order_id'], e['task_id']): e['time'] for e in kitchen.state.events
-              if e['action'] == 'task_started'}
+    dispatcher = Dispatcher(kitchen, rule=rule, ema=ema)
+    actions = 0
 
     def finish(reason):
         return dict(ok=reason == 'completed', status='served' if reason == 'completed' else 'stopped',
                     termination_reason=reason, model_calls=0, tool_calls=actions,
-                    rule_errors=errors, decisions=decisions, ema=deepcopy(ema.values))
+                    rule_errors=dispatcher.errors, decisions=dispatcher.decisions,
+                    ema=deepcopy(dispatcher.ema.values))
 
     while True:
-        # Learn only after completion events, including simultaneous completions.
-        for event in kitchen.state.events[cursor:]:
-            if event['action'] == 'task_started':
-                starts[(event['order_id'], event['task_id'])] = event['time']
-            elif event['action'] == 'tasks_completed':
-                for completed in event['completed']:
-                    owner = kitchen.get_order(completed['order_id'])
-                    task = next(t for t in load_recipe(owner.menu)['tasks']
-                                if t['id'] == completed['task_id'])
-                    ema.update(owner.menu, task, event['time'] - starts[(owner.id, task['id'])])
-        cursor = len(kitchen.state.events)
+        dispatcher.learn()
         if not pending and all(o.status == 'served' for o in kitchen.state.orders.values()):
             return finish('completed')
         if actions >= max_actions:
@@ -172,49 +226,17 @@ def run_priority_episode(kitchen, *, rule=None, ema=None, arrivals=(),
             kitchen.add_order(arrival['menu'], arrival['time_limit'])
             actions += 1
             continue
-        served = False
-        for order in kitchen.state.orders.values():
-            if order.status != 'served' and set(load_recipe(order.menu)['completion_tasks']).issubset(order.completed_tasks):
-                kitchen.serve_order(order.id)
-                actions += 1
-                served = True
-                break
-        if served:
+        if dispatcher.serve_one():
+            actions += 1
             continue
         if kitchen.state.time >= max_simulated_time:
             return finish('simulated_time_limit')
-        ranked, fallback = [], []
-        for order in kitchen.state.orders.values():
-            if order.status == 'served':
-                continue
-            for task in load_recipe(order.menu)['tasks']:
-                try:
-                    kitchen.validate_task(order.id, task['id'])
-                except (KeyError, ValueError):
-                    continue
-                features = task_features(kitchen, order, task, ema)
-                try:
-                    score = rule.score(features)
-                except (ArithmeticError, ValueError):
-                    errors += 1
-                    fallback.append((-order.deadline + 0.001 * features["background"],
-                                     order.id, task["id"], features))
-                    continue
-                ranked.append((score, order.id, task['id'], features))
-        # Stable insertion order breaks ties; every start revalidates all resources.
-        for score, order_id, task_id, features in sorted(ranked or fallback, key=lambda r: -r[0]):
-            try:
-                kitchen.start_task(order_id, task_id)
-            except (KeyError, ValueError):
-                continue
-            decisions.append(dict(time=kitchen.state.time, order_id=order_id,
-                                  task_id=task_id, score=score, features=features))
+        if dispatcher.start_one():
             actions += 1
-            break
-        else:
-            if not kitchen.state.running_tasks and not pending:
-                return finish('no_progress')
-            boundary = min(max_simulated_time, pending[0]['at']) if pending else max_simulated_time
-            kitchen.advance_to_next_event(until=boundary)
-            actions += 1
+            continue
+        if not kitchen.state.running_tasks and not pending:
+            return finish('no_progress')
+        boundary = min(max_simulated_time, pending[0]['at']) if pending else max_simulated_time
+        kitchen.advance_to_next_event(until=boundary)
+        actions += 1
     # Each iteration starts, serves, accepts, or advances exactly one action.

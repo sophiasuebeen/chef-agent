@@ -1,0 +1,58 @@
+{
+  "id": "fig_pasta",
+  "name": "Fig Pasta",
+  "description": "Sweet fresh figs with a buttery cheese sauce and basil. Contains dairy; no seafood ingredients. Rich rather than a light tomato-based dish.",
+  "ingredients": ["spaghetti", "water", "salt", "fig", "butter", "cheese", "basil"],
+  "tasks": [
+    {
+      "id": "collect_ingredients",
+      "description": "Collect spaghetti, fresh figs, butter, cheese and basil.",
+      "duration": 20, "requires": [], "resources": ["chef"]
+    },
+    {
+      "id": "boil_water",
+      "description": "Heat salted water in the pot.",
+      "duration": 120, "requires": ["collect_ingredients"], "resources": ["pot", "burner"],
+      "holds": {"resources": ["pot", "burner"], "until": "cook_pasta_halfway"}
+    },
+    {
+      "id": "slice_figs",
+      "description": "Wash and slice the figs, reserving some fresh slices for plating.",
+      "duration": 35, "requires": ["collect_ingredients"], "resources": ["chef"]
+    },
+    {
+      "id": "prepare_basil",
+      "description": "Prepare the basil leaves.",
+      "duration": 15, "requires": ["collect_ingredients"], "resources": ["chef"]
+    },
+    {
+      "id": "cook_pasta_halfway",
+      "description": "Parboil the spaghetti before finishing it in the pan.",
+      "duration": 240, "requires": ["boil_water"], "resources": ["pot", "burner"],
+      "holds": {"resources": ["pot", "burner"], "until": "reserve_water_and_drain"}
+    },
+    {
+      "id": "reserve_water_and_drain",
+      "description": "Reserve pasta water, drain spaghetti and free the burner.",
+      "duration": 20, "requires": ["cook_pasta_halfway"], "resources": ["chef", "pot"]
+    },
+    {
+      "id": "prepare_fig_sauce",
+      "description": "Gently soften some sliced figs in butter with reserved pasta water.",
+      "duration": 45, "requires": ["reserve_water_and_drain", "slice_figs"], "resources": ["chef", "pan", "burner"],
+      "holds": {"resources": ["pan", "burner"], "until": "finish_pasta"}
+    },
+    {
+      "id": "finish_pasta",
+      "description": "Toss the spaghetti in the fig butter sauce and finish cooking.",
+      "duration": 240, "requires": ["prepare_fig_sauce"], "resources": ["chef", "pan", "burner"],
+      "holds": {"resources": ["pan"], "until": "finish_off_heat"}
+    },
+    {
+      "id": "finish_off_heat",
+      "description": "Off heat, fold in cheese and basil; plate with the reserved fresh fig slices.",
+      "duration": 30, "requires": ["finish_pasta", "prepare_basil"], "resources": ["chef", "pan"]
+    }
+  ],
+  "completion_tasks": ["finish_off_heat"]
+}

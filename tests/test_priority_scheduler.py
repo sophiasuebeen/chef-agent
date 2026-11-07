@@ -97,6 +97,19 @@ class PrioritySchedulerTests(unittest.TestCase):
         kitchen.add_order('lemon_pasta')
         self.assertEqual(run_priority_episode(kitchen, max_actions=1)['termination_reason'], 'action_limit')
 
+    def test_equal_deadlines_finish_the_started_dish_before_starting_another(self):
+        kitchen = Kitchen()
+        orders = [kitchen.add_order('lemon_pasta', 900) for _ in range(4)]
+        run_priority_episode(kitchen, max_simulated_time=3000)
+        self.assertEqual([o.served_at for o in orders], [710, 1370, 2030, 2690])
+
+    def test_different_deadlines_still_outrank_remaining_work(self):
+        kitchen = Kitchen()
+        later = kitchen.add_order('lemon_pasta', 1500)
+        sooner = kitchen.add_order('lemon_pasta', 900)
+        run_priority_episode(kitchen)
+        self.assertEqual((sooner.served_at, later.served_at), (710, 1370))
+
     def test_simultaneous_completions_and_boundary_validation(self):
         kitchen = Kitchen()
         order = kitchen.add_order('lemon_pasta')
@@ -107,7 +120,10 @@ class PrioritySchedulerTests(unittest.TestCase):
         kitchen.state.running_tasks[0].finishes_at = 40
         event = kitchen.advance_to_next_event(until=40)
         self.assertEqual(len(event['completed']), 2)
-        self.assertTrue(all(v is None for v in kitchen.state.resources.values()))
+        self.assertIsNone(kitchen.state.resources['chef'])
+        # Boiled water stays in the pot on the burner until cook_pasta_halfway starts.
+        self.assertEqual(kitchen.state.resources['pot'], (order.id, 'boil_water'))
+        self.assertEqual(kitchen.state.resources['burner'], (order.id, 'boil_water'))
         before = deepcopy(kitchen.state)
         with self.assertRaises(ValueError):
             kitchen.advance_to_next_event(until=39)

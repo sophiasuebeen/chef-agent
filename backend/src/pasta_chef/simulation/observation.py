@@ -1,7 +1,7 @@
 from copy import deepcopy
 from dataclasses import asdict
 
-from .kitchen import validate_task
+from .kitchen import free_chef, validate_task
 from .models import KitchenState
 from .recipes import load_recipe
 
@@ -23,7 +23,7 @@ def build_observation(state: KitchenState) -> dict:
         "time": state.time,
         "orders": [asdict(o) for o in state.orders.values() if o.status != "served"],
         "resources": {r: list(owner) if owner else None for r, owner in state.resources.items()},
-        "chef_available": state.resources["chef"] is None,
+        "chef_available": free_chef(state) is not None,
         "running_tasks": [dict(asdict(t), remaining_time=t.finishes_at - state.time)
                           for t in state.running_tasks],
         "completed_tasks": {o.id: list(o.completed_tasks) for o in state.orders.values()},

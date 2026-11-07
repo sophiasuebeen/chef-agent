@@ -1,199 +1,116 @@
-# Pasta Chef terminal demo
+# Restaurant Agent Team
 
-One lemon-pasta order, one Google ADK ChefAgent, one chef, one burner, pot and
-pan. The simulator owns all rules. Inventory is assumed sufficient; vessel
-contents, cooling and overcooking are not modeled.
+**A playable 3D beach restaurant with conversational AI staff and a kitchen simulation.**
+<p>
+  <a href="docs/images/scene-dining.png"><img src="docs/images/scene-dining.png" width="49%" alt="Restaurant dining room"></a>
+  <a href="docs/images/scene-terrace.png"><img src="docs/images/scene-terrace.png" width="49%" alt="Seaside terrace"></a>
+</p>
 
-## Restaurant scene
+Explore the dining room, take a seat, and order pasta by talking to your waiter. Watch chefs prepare your meal, ask about ingredients or recommendations, and have your food brought to the table.
 
-Work-in-progress 3D renders of the dining room and terrace. The scene code is in
-[PR #4](https://github.com/sophiasuebeen/chefAgent/pull/4).
+The project connects natural-language interaction to a working restaurant simulation: AI staff handle conversation and invoke validated tools, while Python code owns cooking, equipment allocation, seating, and delivery state.
 
-| Dining room | Terrace |
-| --- | --- |
-| ![Dining room at golden hour](docs/images/scene-dining.png) | ![Terrace at golden hour](docs/images/scene-terrace.png) |
+**Demo** · Click a GIF to enlarge.
 
-## Terminal demo
+<table>
+<tr>
+<td width="50%"><a href="docs/images/staff-complaint-gameplay.gif"><img src="docs/images/staff-complaint-gameplay.gif" width="360" alt="Customer complaint leads to a manager handoff and waiter reassignment"></a><br>Complaints → manager handoff and a new waiter.</td>
+<td width="50%"><a href="docs/images/kitchen-check-gameplay.gif"><img src="docs/images/kitchen-check-gameplay.gif" width="360" alt="Customer asks why food is taking so long; waiter checks with the kitchen and returns with an estimate"></a><br>“Why so long?” → “I'll check with the kitchen.”</td>
+</tr>
+<tr>
+<td><a href="docs/images/live-cooking-gameplay.gif"><img src="docs/images/live-cooking-gameplay.gif" width="360" alt="Chefs cook pasta while live orders progress"></a><br>Live cooking and order progress.</td>
+<td><a href="docs/images/restaurant-terrace-gameplay.gif"><img src="docs/images/restaurant-terrace-gameplay.gif" width="360" alt="Walk through the dining room and explore the seaside terrace"></a><br>Dining room and seaside terrace.</td>
+</tr>
+</table>
 
-Python 3.12+ is required. Run commands from this repository root.
+## Architecture
 
-The simulator and scripted baseline need no packages or credentials:
+```mermaid
+flowchart TD
+    Game["3D Game / Replay UI<br/>React · React Three Fiber"]
+    API["FastAPI<br/>Session and batch-run APIs"]
 
-```bash
-PYTHONPATH=backend/src python3 scripts/run_local.py
+    subgraph Backend["Python Backend"]
+        Dining["RestaurantRuntime<br/>Seating · staff tasks · table delivery"]
+        Waiters["WaiterAgent A / B<br/>Table conversation · order tools"]
+        Manager["ManagerAgent<br/>Service exceptions · waiter reassignment"]
+        Advisor["KitchenAdvisorAgent<br/>Menu facts · preparation · wait estimates"]
+        Kitchen["LiveKitchen + Dispatcher<br/>Recipe validation · scheduling · equipment"]
+    end
+
+    Game -->|"Actions and state polling"| API
+    API -->|"Cooking events via SSE"| Game
+    API --> Dining
+    API --> Waiters
+    Waiters -->|"Validated order tools"| Kitchen
+    Waiters -->|"Consultation as an agent tool"| Advisor
+    Waiters -->|"Conversation handoff"| Manager
+    Manager -->|"Reassign waiter"| Dining
+    Advisor -->|"Read facts and simulate estimates on copies"| Kitchen
+    Dining -->|"Read ready orders for delivery"| Kitchen
+    Kitchen -->|"Events and snapshots"| API
 ```
 
-The action log shows water heating overlapping mint and garlic preparation.
-The scripted dish is served at simulated second 710 against a 900-second deadline.
-`--menu lemon_pasta` and `--time-limit 900` configure order intake.
+## Core Design Choices
 
-Install the optional ADK extra once (versions are pinned in backend/uv.lock):
+### Stateful waiters & read-only kitchen advice
 
-```bash
-uv sync --project backend --extra agent --locked
+Waiters retain table-scoped conversation history and place orders through validated tools. For recommendations or progress questions, they consult `KitchenAdvisorAgent`, which reads menu and order data and estimates waits on copies of the live kitchen. The waiter keeps the conversation; cooking continues independently.
+### Resource-constrained cooking
+
+Recipes are directed acyclic graphs of tasks. The simulator enforces dependencies and exclusive equipment ownership; the `Dispatcher` ranks feasible tasks with:
+
+```text
+score = -deadline - 0.001 × remaining_work + 0.00001 × background
 ```
 
-Use existing `GOOGLE_API_KEY` / `GEMINI_API_KEY` environment credentials or a
-local `.env` at the repository root or in backend. Existing shell variables win;
-root `.env` takes precedence over backend/.env. `.env.example` documents model
-and episode limits. For Gemini, the terminal demo sets `GOOGLE_GENAI_USE_VERTEXAI=false`
-before initializing ADK and uses the Gemini Developer API with the existing key.
-For OpenAI models, set `OPENAI_API_KEY` and `CHEF_MODEL=openai/gpt-4o`, or use
-`--model openai/gpt-4o` to override the model from `.env`. ADK uses its LiteLLM
-adapter for OpenAI. Google Cloud authentication is not used. No key is required for offline tests.
+Higher scores run first, favoring earlier deadlines and less remaining work. Duration estimates adapt through an exponential moving average (EMA) of completed tasks' timing deviations. See [scheduling details](docs/priority-scheduling.md).
 
-Run the live agent demo with one terminal command:
+### Ownership
 
-```bash
-PYTHONPATH=backend/src backend/.venv/bin/python scripts/run_local.py --mode agent --model openai/gpt-4o
-```
+`RestaurantRuntime` owns seating, staff assignments, and delivery. Complaints trigger a handoff to `ManagerAgent`, which inspects service state and can reassign a waiter through validated tools. Agents interpret intent; runtime code enforces every state change.
 
-This is also the **opt-in live smoke test**: it uses the configured model and
-real credentials, can incur provider usage, and succeeds only when the simulator
-records service. It is never run by unittest discovery. An exit code of 0 means
-served; a deadline miss is reported as `on_time: false`. Exit code 1 means an
-invalid order, missing configuration, provider failure or exhausted limit.
-The terminal prints the successful simulator action log and final observation,
-including model/tool counts. Network or model failures never invoke a scripted
-fallback. No credentials are printed.
 
-Live requests send only the newest observation, ask OpenAI models for one tool
-call per decision, and retry 429/500/502/503/504 up to five times with backoff (an
-exhausted quota is not retried). Waiting counts against `CHEF_TIMEOUT_SECONDS`,
-which now defaults to 300. Each result's `decision_log` records every model
-call with its tokens, every tool attempt with any rejection, and every retry.
+## Tech Stack
 
-`evaluation.run` and `run_local.py --mode agent` print progress to stderr as it
-happens, with a heartbeat every 10 seconds naming what is being waited on (model
-response or retry backoff). Heartbeats stopping means the process is blocked.
+| Layer | Technologies | Role |
+| --- | --- | --- |
+| Frontend | TypeScript, React, Vite | Game interface, conversation panels, and replay controls |
+| 3D rendering | Three.js, React Three Fiber, Drei, React Three Postprocessing | Restaurant scene, characters, cooking effects, and lighting |
+| UI state | React hooks, Zustand | Player interaction, scene settings, and client presentation state |
+| Backend | Python 3.12+, FastAPI, Pydantic, Uvicorn | Validated HTTP endpoints, live sessions, and event streaming |
+| AI staff | OpenAI Agents SDK, OpenAI models | Waiter conversations, kitchen consultation tools, and manager handoffs |
+| Simulation | Python recipe/task models and priority dispatcher | Task dependencies, equipment ownership, simulated time, and deadlines |
+| Development and verification | uv, npm, Python unittest, Node.js test runner, TypeScript | Dependency management, offline checks, and builds |
 
-Offline verification (no provider requests). For a readable report grouped by
-area, run every suite with:
+## Local Setup
 
-```bash
-backend/.venv/bin/python scripts/run_tests.py
-```
+Requires **Python 3.12+**, **uv**, **Node.js 22.18+**, and an **OpenAI API key**.
 
-Or use plain unittest:
+1. Install dependencies from the repository root:
 
-```bash
-PYTHONPATH=backend/src python3 -m unittest discover -s tests -v
-PYTHONPATH=backend/src backend/.venv/bin/python -m unittest discover -s tests -v
-```
+   ```bash
+   uv sync --project backend --extra agent --extra api --locked
+   npm --prefix frontend ci
+   ```
 
-The first command runs simulator/wrapper checks and skips ADK checks if that
-optional package is absent. With the extra installed, tests/test_agent_workflow.py
-runs the real ADK Runner and tool dispatch using a mocked BaseLlm. Those checks
-prove local orchestration, tool schemas, validation and limits, not Gemini
-availability or live model performance. Claude owns tests/test_kitchen_contract.py;
-this implementation does not modify it.
+2. Add your key and model to the root `.env` file:
 
-See [the stable public contract](docs/backend-contract.md) and
-[the execution path](docs/architecture.md).
+   ```dotenv
+   OPENAI_API_KEY=your_api_key_here
+   RESTAURANT_MODEL=gpt-4o
+   ```
 
-Verified live smoke run: `openai/gpt-4o` served order_1 on time at simulated
-second 710, with 9 model calls and 20 tool attempts. All resources were released.
-The separate offline workflow suite passed 22 tests. A live run's decisions and
-call counts can vary.
+3. Run the backend and frontend in separate terminals:
 
-Two-order live smoke test (one ChefAgent, both orders accepted at time zero):
+   ```bash
+   # Terminal 1
+   backend/.venv/bin/uvicorn pasta_chef.main:app --app-dir backend/src --reload
+   ```
 
-```bash
-PYTHONPATH=backend/src backend/.venv/bin/python scripts/check_two_orders.py --max-simulated-time 1800 --report /tmp/pasta-chef-two-orders.json
-```
+   ```bash
+   # Terminal 2
+   npm --prefix frontend run dev
+   ```
 
-This tests order_1 with deadline 1500 and order_2 with deadline 900. Omitting
-`--max-simulated-time` uses the configured episode cap; the default 1200 is too
-short for both orders (they need 1280 seconds of burner time alone). The script
-writes settings, per-order outcomes, action events and replay checks. It exits
-nonzero if an order is late, even if both dishes were served. It makes live
-provider calls and is separate from unittest discovery.
-
-Observed GPT-4o two-order run: order_1 served at 710 (on time), order_2 served at
-1370 (470 seconds late), with 18 model calls and 45 tool attempts. All progress,
-resource-release and action-replay checks passed. A separate scripted
-urgency-first sequence served order_2 at 710 and order_1 at 1420, meeting both
-deadlines. This exposes a deadline-prioritization issue in the current agent;
-the test does not change the prompt or simulator rules.
-
-Priority dispatch and offline evolution
-
-Run without live model decisions:
-
-```bash
-PYTHONPATH=backend/src python3 scripts/run_local.py --mode priority
-```
-
-This mode executes a validated priority rule locally and learns duration deviations
-from completed tasks using EMA. It supports exact-time order arrivals and optional
-uncertain durations for offline experiments. An offline evolution loop generates,
-scores, reflects on, and selects candidate rules; `--live` lets Gemini author those
-rules, while service itself makes no API calls. See
-[priority scheduling](docs/priority-scheduling.md) for commands, feature definitions,
-training/held-out separation, and current simulator limitations.
-
-Deadline prompt comparison (minimal evaluation)
-
-`evaluation/scenarios/two_orders.json` fixes one chef, the existing four
-resources, both orders accepted at time zero, deadlines 1500/900, and simulated
-time cap 1800. The model/tool-call limits and wall-clock timeout come unchanged
-from the existing Settings / `.env`. Every agent episode gets a fresh Kitchen,
-ChefAgent, in-memory session service and ADK session. Agent execution always
-uses `runtime/controller.py:run_agent_episode`; evaluation has no action loop.
-
-The `original` variant preserves the previous prompt exactly. `deadline` only
-appends the explicit deadline objective. The same model, temperature, scenario
-and limits are used for both variants, alternating them three times each.
-The baseline runs once, reusing `scripts/run_local.py:run_scripted` in earliest
-deadline order. It uses no model/tools from ADK, so both call counts are zero.
-
-Run only the credential-free scripted baseline:
-
-```bash
-PYTHONPATH=backend/src python3 -m evaluation.run --baseline-only --model openai/gpt-4o
-```
-
-Start the full comparison explicitly (six real model episodes plus baseline):
-
-```bash
-PYTHONPATH=backend/src backend/.venv/bin/python -m evaluation.run --live --model openai/gpt-4o --repetitions 3
-```
-
-Existing root/backend `.env` credentials are loaded before ADK is initialized;
-keys are never included in reports. There is no live run during test discovery.
-An explicit `--live` or `--baseline-only` is required. No experiment starts by
-importing the evaluation modules.
-
-Results go into a new `evaluation/results/<UTC timestamp>-<unique suffix>/`:
-`scripted-1.json`, `original-1.json` through `original-3.json`,
-`deadline-1.json` through `deadline-3.json`, and `comparison.md`.
-Use `--output <new-directory>` to choose a path; existing output directories
-are rejected to prevent mixing experiments. Files and the comparison table
-are saved after each episode, including stopped/failed episodes.
-
-Each JSON records the exact prompt and hash, scenario, non-secret settings and
-limits, controller result, action log, per-order results and metrics:
-`all_served`, `all_on_time`, integer counts `unserved_orders` / `late_orders`,
-`total_tardiness`, `finished_at`, model/tool calls, and `termination_reason`.
-`finished_at` is the final observed simulated timestamp, including a stopped
-run. Tardiness is `sum(max(0, served_at - deadline))` for served orders only;
-unserved orders have null service time/tardiness and are counted separately.
-If an Order lacks served_at, the service event is used without changing state.
-Missing all service-time evidence raises an error instead of inventing zero.
-Any unserved order makes both all_served and all_on_time false.
-`run_success` additionally requires completed execution and all_on_time, so a
-stopped run with zero tardiness is never presented as a successful result.
-
-Termination codes distinguish `completed`, `simulated_time_limit`,
-`wall_clock_limit`, `model_call_limit`, `tool_call_limit`, `configuration_error`,
-`api_error`, `no_progress`, and `setup_error`. Evaluation exit code 0 means the
-comparison was saved; the rows' run_success fields describe cooking outcomes.
-Three repetitions per prompt are exploratory and cannot establish a confirmed
-performance improvement.
-
-Live comparison executed on 2026-11-06 with `openai/gpt-4o`, three episodes per
-prompt: [results and limitations](evaluation/results/20261106T054509Z-f088d8e0/summary.md).
-The original completed one episode with 470 seconds of tardiness; the other
-five episodes stopped with provider `RateLimitError`. The deadline prompt
-served the urgent order on time in its first episode before interruption,
-but this incomplete sample does not establish an improvement.
+Open **http://localhost:5173** (or the URL printed by Vite).
