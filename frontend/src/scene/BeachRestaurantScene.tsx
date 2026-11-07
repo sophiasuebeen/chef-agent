@@ -1,3 +1,4 @@
+import type { Language } from '../game/language';
 import { Canvas, type ThreeEvent } from '@react-three/fiber';
 import { memo, useLayoutEffect, useRef, type ReactNode } from 'react';
 import type { Object3D } from 'three';
@@ -34,6 +35,9 @@ export interface BeachRestaurantSceneProps {
   replayFrame?: KitchenFrame;
   /** Live play: chefs walk in real time. */
   live?: boolean;
+  equipmentCount?: number;
+  pantryIngredients?: string[];
+  language?: Language;
   speech?: { speaker: string; text: string };
   /** Something in `children` drives the camera, so the preset rig stands down. */
   ownCamera?: boolean;
@@ -114,6 +118,9 @@ export function BeachRestaurantScene({
   live,
   speech,
   ownCamera,
+  equipmentCount,
+  pantryIngredients,
+  language,
   onFloorClick,
   children,
 }: BeachRestaurantSceneProps) {
@@ -135,10 +142,10 @@ export function BeachRestaurantScene({
       {!ownCamera && <CameraRig uiSafeArea={uiSafeArea} chefFocus={chefFocus} />}
       <PointerRoot onObjectClick={onObjectClick} onObjectHover={onObjectHover} onFloorClick={onFloorClick}>
         <StaticKitchen />
-        <KitchenReplay frame={replayFrame} live={live} speech={speech} />
+        <KitchenReplay frame={replayFrame} live={live} speech={speech} equipmentCount={equipmentCount} ingredients={pantryIngredients} language={language} />
         {children}
-        <StaticDiningHall />
-        <StaticTerrace />
+        <StaticDiningHall showDemoFood={!ownCamera} />
+        <StaticTerrace showDemoFood={!ownCamera} />
         <StaticSeascape />
       </PointerRoot>
       <LayoutDebug />

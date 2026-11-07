@@ -70,8 +70,10 @@ export function Chef({ activity, index = 0, time, live = false, speech }: {
     const progress = activity.travel * activity.travel * (3 - 2 * activity.travel);
     let walking = progress < 1 && target.type !== previous.type;
     const phase = (live ? clock.elapsedTime : activity.elapsed) * 2.1;
-    const [fromX, fromZ] = chefStandPoint(previous, activity.offset);
-    const [toX, toZ] = chefStandPoint(target, activity.offset);
+    const [fromX, fromZ] = chefStandPoint(previous, activity.fromEquipmentSlot !== undefined && ['boil', 'sauce'].includes(previous.type)
+      ? [(activity.fromEquipmentSlot - 1) * 0.5, activity.offset[1]] : activity.offset);
+    const [toX, toZ] = chefStandPoint(target, activity.equipmentSlot !== undefined && ['boil', 'sauce'].includes(target.type)
+      ? [(activity.equipmentSlot - 1) * 0.5, activity.offset[1]] : activity.offset);
     if (live) {
       const position = root.current.position;
       const dx = toX - position.x, dz = toZ - position.z;

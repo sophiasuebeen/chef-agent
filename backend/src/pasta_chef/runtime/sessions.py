@@ -32,8 +32,8 @@ def decide_small_talk(turns_used, *, handed_off, would_make_late, helper_free):
 class LiveKitchen:
     """Dispatch up to a given simulated time. Knows nothing about real time."""
 
-    def __init__(self, *, rule=None, ema=None, duration_sampler=None, chefs=1):
-        self.kitchen = Kitchen(duration_sampler=duration_sampler, chefs=chefs)
+    def __init__(self, *, rule=None, ema=None, duration_sampler=None, chefs=1, equipment=None):
+        self.kitchen = Kitchen(duration_sampler=duration_sampler, chefs=chefs, equipment=equipment)
         self.dispatcher = Dispatcher(self.kitchen, rule=rule, ema=ema)
         self.now = 0
         self._hold_wanted = None  # Seconds, once the chef is free.
@@ -175,6 +175,8 @@ class LiveSession:
         self._small_talk_turns = 0
         self._handed_off = False
         self._last_small_talk = None
+        from pasta_chef.runtime.restaurant import RestaurantRuntime
+        self.restaurant = RestaurantRuntime(self)
 
     def sync(self):
         self.live.advance_to(int((self._clock() - self._started_at) * self.speed))
@@ -274,9 +276,10 @@ class SessionStore:
         self._clock = clock
         self._sessions = {}
 
-    def create(self, speed, chefs=1):
+    def create(self, speed, chefs=1, equipment="standard"):
         session_id = uuid4().hex
-        self._sessions[session_id] = LiveSession(speed=speed, clock=self._clock, chefs=chefs)
+        self._sessions[session_id] = LiveSession(speed=speed, clock=self._clock, chefs=chefs,
+                                                     equipment={"burner": 6, "pot": 3, "pan": 3} if equipment == "expanded" else None)
         return session_id
 
     def get(self, session_id):

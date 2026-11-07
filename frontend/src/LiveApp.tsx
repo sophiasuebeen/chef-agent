@@ -3,6 +3,7 @@ import { useLiveKitchen } from './game/useLiveKitchen';
 import { idleResources, isChefResource } from './scene/replayPresentation';
 import type { CameraPresetId } from './data/cameraPresets';
 import { ChatPanel } from './components/ChatPanel';
+import { StaffNotification } from './components/StaffNotification';
 import './replay.css';
 
 const RestaurantScene = lazy(() => import('./scene/BeachRestaurantScene').then(({ BeachRestaurantScene }) => ({ default: BeachRestaurantScene })));
@@ -33,6 +34,7 @@ export function LiveApp() {
   }
 
   return <main className="replay-app">
+    <StaffNotification key={info?.session_id} progress={error ? null : kitchen.staffProgress} busy={replying} />
     <header className="page-header"><div><p className="eyebrow">Pasta Chef / live kitchen test</p>
       <h1>Order. Chat. Watch it cook.</h1><p>주문은 셰프와의 대화로, 조리는 스케줄러가 맡습니다.</p></div>
       <a href="./">게임으로 ↗</a></header>
@@ -49,7 +51,8 @@ export function LiveApp() {
             {[1, 10, 30, 100].map((value) => <option key={value} value={value}>{value}초</option>)}</select></label>
           <button className="primary" disabled={opening}>{opening ? '여는 중…' : '주방 열기'}</button>
         </form> : <section aria-label="대화"><h2>셰프와 대화</h2>
-          <ChatPanel entries={entries} busy={replying} disabled={false} menuName={menuName} onSend={send} />
+          <ChatPanel entries={entries} busy={replying} disabled={false} menuName={menuName} onSend={send}
+            progress={kitchen.staffProgress} />
           <p className="muted">메시지마다 모델 요금이 발생할 수 있습니다.</p></section>}
         {error && <div className="notice error" role="alert">{error}</div>}
       </aside>

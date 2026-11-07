@@ -1,109 +1,43 @@
 # Architecture
 
-## Terminal execution path
+## Cooking and customer conversation
 
-1. `scripts/run_local.py` parses the menu, creates one `Kitchen`, and calls
-   `Kitchen.add_order()`. Order intake is deterministic and never delegated to
-   the model. The default mode invokes an explicit scripted baseline.
-2. Agent mode loads `.env` and configurable model/limits through
-   `backend/src/pasta_chef/config.py`, then invokes
-   `backend/src/pasta_chef/runtime/controller.py:run_agent_episode()`.
-3. The controller creates one in-memory ADK session, one Runner, and one
-   `ChefAgent` through `backend/src/pasta_chef/agents/chef.py`. The model receives
-   the recipe, objective, tool contracts, resource rules and fresh observation.
-   OpenAI model names (such as openai/gpt-4o) use ADK’s LiteLLM adapter;
-   Gemini model names use ADK’s native Gemini adapter. Root .env is loaded
-   before either adapter is initialized. The --model option overrides CHEF_MODEL.
-4. The model chooses functions exposed by
-   `backend/src/pasta_chef/agents/tools/kitchen.py:KitchenTools`. These instance
-   methods refer to this episode's kitchen. They call the simulator and return
-   structured results plus a new observation. Rejections do not alter kitchen
-   state. They do consume the tool-attempt budget.
-5. `backend/src/pasta_chef/simulation/kitchen.py` validates and executes starts,
-   completes every task at the earliest event, releases resources, and serves
-   only a completed order. `models.py` holds the dataclasses and action log;
-   `recipes.py` loads registered files from `recipes/`. `observation.py` builds detached,
-   serializable snapshots using the same task validation as actual starts.
-6. After a tool round, ADK's `skip_summarization` callback returns control to the
-   controller. A round may contain multiple tool calls, each budget checked.
-   Counts persist across Runner invocations. Text-only claims cannot serve a
-   dish. When nothing is startable or ready to serve, the controller advances
-   pending events without calling the model. It does not choose between cooking
-   tasks. With `skip_forced_moves` (evaluation only), it also serves finished
-   orders and starts a lone task of the last active order, logged as `controller`.
-7. The controller exits successfully only when all accepted orders are served.
-   `serve_order()` records service time and deadline compliance. The terminal
-   prints the action log and final observation; failures exit nonzero.
+`simulation/kitchen.py` owns cooking state, recipe dependencies, equipment,
+chef assignment, completion events and service validation. `observation.py`
+returns detached snapshots. The simulator imports only the standard library.
 
-Limits include total model calls, tool attempts (reads and rejected actions
-included), simulated timestamp, and wall-clock episode time. Every wrapper
-checks the tool budget before execution; advancing past the simulated bound is
-rejected before time changes. A model callback bounds calls across invocations,
-ADK RunConfig also caps each invocation, and asyncio bounds episode duration.
-No cooking uses wall-clock sleeps. Existing simulator state remains available
-in the final observation after failure, rather than pretending to finish.
+`scripts/run_local.py` accepts an order and runs either the scripted baseline
+or the priority dispatcher. Neither mode loads credentials or calls an LLM.
+`simulation/scheduler.py:Dispatcher` scores ready tasks across orders, starts
+compatible work, and serves completed dishes. Recipe validation remains in
+`Kitchen`. Batch episodes enforce action and simulated-time limits.
 
-Simulator imports and scripted/priority execution remain independent of
-credentials and SDK installation. Package installation currently includes ADK
-as a required dependency in `backend/pyproject.toml`; the `agent` extra adds
-LiteLLM and python-dotenv. Authoritative kitchen
-state lives outside ADK session state. Reset replaces it with a fresh state.
-No API server, storage service, frontend, or second agent is part of this path.
+`runtime/sessions.py` uses the same dispatcher for live sessions, mapping real
+time to simulated time and exposing an event stream. The legacy chef-hold API can
+reserve a chef; conversations with the default waiter team do not hold chefs.
 
-The contract is in `docs/backend-contract.md`. Mocked orchestration tests live
-in `tests/test_agent_workflow.py`; the live smoke test is the explicit terminal
-command in README.md and is not part of unittest discovery.
+`agents/team.py` defines OpenAI SDK `ManagerAgent`, `WaiterAgent_A` and `WaiterAgent_B`.
+`agents/kitchen_advisor.py` supplies a read-only `KitchenAdvisorAgent`, invoked through
+the waiters' `ask_kitchen` agent tool. Its findings return to the calling waiter.
+Waiters handle ordinary conversation and validated order tools; `call_manager` is
+an SDK handoff for exceptions. `runtime/restaurant.py` owns table assignment,
+order ownership, greeting tasks, pickup and delivery. Cooking remains in Dispatcher.
+Each table has isolated conversation history and scoped order-status tools.
+`agents/host.py` retains shared menu/order validation and the legacy ADK host;
+its default factory now creates the OpenAI team. `config.py` loads local credentials.
+See [restaurant team](restaurant-team.md) for the complete hierarchy and limits.
 
-`evaluation/run.py` reuses this controller for each prompt/repetition, with
-`prompt_variant="original"` (the default) or `"deadline"`. `agents/chef.py`
-preserves the original instruction and appends the deadline goal only for the
-second variant. `controller.py` adds a structured `termination_reason` to its
-existing result; EpisodeLimit carries the reason without changing any limit.
-The prompt comparison uses the same simulator, recipe durations, resources
-and task dependencies for both variants. `evaluation/metrics.py` computes deadline outcomes separately
-from the controller's existing all-served success condition.
+## Priority-rule evaluation
 
+`evaluation/evolve.py` evaluates arithmetic priority rules against synthetic
+arrivals and duration variation. Fixture generation is offline; `--live` explicitly
+opts into Gemini rule generation. Models never run during priority-based service.
+`evaluation/metrics.py` computes deadline outcomes. See
+[priority scheduling](priority-scheduling.md) and [evaluation](evaluation.md).
 
-## Model context, retries and progress
-
-`agents/chef.py` removes old tool-result observations from a copy of the model
-history and appends the current kitchen observation before every model call.
-Past action results and rejections stay visible; stored session history is not
-mutated. OpenAI requests disable parallel tool calls and LiteLLM's own retries.
-
-`agents/retrying_llm.py:RetryingLlm` wraps both the LiteLLM and Gemini adapters.
-It retries eligible 429/500/502/503/504 failures up to five times, honoring a
-provider retry delay when available or using exponential backoff from 2 seconds,
-capped at 60 seconds per wait. Insufficient credit/daily-quota failures are not
-retried; a response already yielded is never replayed after an error. Retries
-belong to the same logical model call and do not reset episode budgets. Backoff
-waits count toward the wall-clock timeout. Failures remain explicit; there is
-no scripted fallback.
-
-`runtime/progress.py:EpisodeProgress` tracks model requests/responses, tokens,
-tool outcomes, retry backoff, and the termination reason. The controller starts
-a heartbeat task and cancels it on exit. It reports the current waiting phase
-every 10 seconds; lack of heartbeats can indicate that the event loop is blocked.
-Terminal agent mode and `evaluation.run` call `enable_progress_logs()` to emit
-these updates to stderr, keeping stdout available for results. Provider retry
-diagnostics use an allowlist rather than raw provider error text. Structured
-model/tool/retry details also appear in each episode's `decision_log`.
-
-## Priority scheduling and evaluation
-
-`simulation/scheduler.py` provides a separate local dispatch loop with bounded
-arithmetic priority rules, completed-duration EMA history and scheduled arrivals.
-It calls the same kitchen validators and uses `advance_to_next_event(until=...)`
-to stop at arrival/time boundaries. Optional `Kitchen(duration_sampler=...)`
-adds duration uncertainty without editing recipes. Neither scripted service nor
-priority dispatch calls a model. `evaluation/evolve.py` generates and scores
-priority rules offline, using fixture candidates by default or explicitly
-requested live Gemini generation. See [priority scheduling](priority-scheduling.md).
-
-`evaluation/run.py` compares live prompt variants through the existing agent
-controller and runs a credential-free scripted baseline. Metrics distinguish
-all-served execution from on-time service. Commands, metric definitions and
-historical experiment results are in [evaluation.md](evaluation.md).
+The previous LLM cooking controller, prompt comparison, tool wrappers and episode
+progress logs have been removed. Offline tests are grouped by simulator, metrics,
+provider behavior, scheduling, live sessions and API contracts.
 
 ## HTTP API and frontend
 
@@ -111,15 +45,16 @@ historical experiment results are in [evaluation.md](evaluation.md).
 and locks per run in process memory. Routes create a run, accept/read orders,
 read simulator state, execute once, and retrieve a frozen replay. Execution holds
 only the selected run's lock and synchronously invokes the shared scripted
-baseline (`simulation/scripted.py`), priority scheduler, or existing agent controller.
+baseline (`simulation/scripted.py`) or priority scheduler.
 Runs disappear on restart and are not shared across workers.
 See [the API guide](../backend/src/pasta_chef/api/README.md) for the HTTP contract.
 `api/events.py` assembles replay schema v1.0: initial conditions, embedded recipes,
 policy/version, complete sequenced simulator log, every final order and stop metrics.
 `Kitchen._record()` assigns sequence numbers at append time so equal-timestamp
-actions retain their ordering. Live event streaming is not implemented.
+actions retain their ordering. The separate session API streams live events.
 
-`frontend/src/ReplayApp.tsx` is the default order-and-replay page. Vite forwards
+`frontend/src/GameApp.tsx` is the default game. `?live` opens the live kitchen
+test page; `?replay` opens `ReplayApp.tsx` for batch execution and replay. Vite forwards
 `/api` requests to the local API. `replay.ts` reconstructs full state from the
 initial snapshot, embedded recipe resources and events through a timestamp/sequence
 cursor. It uses recorded finish times rather than recalculating durations. Seeking
@@ -166,5 +101,15 @@ well as replayed state.
 
 At `?scene`, the lazily loaded existing `App.tsx` mounts `BeachRestaurantScene`
 with camera, time-of-day and debug controls and an idle chef/kitchen. Scene state
-remains local in Zustand. Live event streaming, table delivery and chat remain
-future integration work.
+remains local in Zustand. The default game connects live sessions, chat and
+table delivery.
+
+### Game interactions
+
+The game offers the existing golden/noon/dusk/night lighting presets and remembers the selected time locally. Music volume opens from the speaker icon. A disconnected event stream uses a small status indicator instead of a persistent text label.
+
+Ready orders can be picked up at the pass with E, carried by the player, and placed at a nearby unoccupied seat's plate slot with E. A placed dish can be picked up again. Readiness is derived from backend `order_served` events; plate locations are presentation state for the current browser session and do not change cooking or deadline results. Demo food is hidden during play.
+
+Expanded game sessions use three pot and three pan stations, each with its own burner. Recipes continue to request generic resources, while the simulator assigns concrete unit names and records them in task events. The pantry displays the union of registered menu ingredients; stock remains unlimited, as in the simulation.
+
+Players can press E near a chair or banquette seat to sit facing its table, then press E to stand at their previous walkable floor position. Seated players can turn the camera but cannot walk or click to move. Carrying a dish keeps placement as the primary interaction; with empty hands, a nearby seat takes priority over picking a dish back up from the table. Chair positions and orientation come from the shared layout.

@@ -8,10 +8,10 @@ backend/.venv/bin/uvicorn pasta_chef.main:app --app-dir backend/src --reload
 ```
 
 `uv sync` removes packages from extras it was not given. If this environment also
-runs the agent, sync with both: `--extra api --extra agent`.
+runs customer conversation, sync with both: `--extra api --extra agent`.
 
 Interactive docs are at http://127.0.0.1:8000/docs. Scripted and priority execution
-need no API key. Agent comparison uses the configured provider and credentials.
+need no API key. Customer conversation uses the configured provider and credentials.
 
 | Method and path | Body | Success | Errors |
 | --- | --- | --- | --- |
@@ -61,19 +61,15 @@ The optional body defaults to:
 {"policy":"scripted","max_actions":1000,"max_simulated_time":1800}
 ```
 
-`policy` is `scripted`, `priority` or `agent`. Scripted uses the existing lemon
-pasta sequence, cooking orders in stable earliest-deadline order. Priority uses
-the existing earliest-due-date dispatch rule, fresh EMA history, and all compatible
-ready tasks. Agent invokes the existing bounded ADK controller with its original
-prompt, configured model, provider retry behavior, model-call and wall-clock limits.
-It does not fall back to an offline policy on provider failure.
+`policy` is `scripted` or `priority`. Scripted uses recipe-ordered cooking in
+stable earliest-deadline order. Priority dispatches ready tasks across orders with
+an earliest-due-date rule and fresh EMA history. Neither policy calls an LLM.
+The removed `agent` policy returns validation error `422`.
 
-`max_actions` must be an integer from 1 to 10000. Offline modes count kitchen
-actions; agent mode counts tool attempts, including reads and rejections.
+`max_actions` is an integer from 1 to 10000 and counts kitchen actions.
 `max_simulated_time` is an absolute simulated timestamp from 1 to 86400.
-Offline modes advance exactly to this boundary and allow service of work completed
-there. The existing agent controller can stop earlier when its next advance would
-exceed the cap. Neither execution nor playback sleeps to simulate backend cooking.
+Both policies advance exactly to this boundary and allow service of work completed
+there. Neither execution nor playback sleeps to simulate backend cooking.
 
 Both execute and replay return the same document (also described in `/openapi.json`):
 
@@ -83,7 +79,7 @@ Both execute and replay return the same document (also described in `/openapi.js
 | `run_id` | Owning run ID |
 | `initial_conditions` | Full kitchen state at run creation, before order-acceptance events; `time`, all `orders`, resource owners, running tasks |
 | `recipes` | Full recipe definitions keyed by menu, captured for this execution |
-| `scheduling_policy` | Policy name and version; priority rule name/expression or agent model/prompt variant |
+| `scheduling_policy` | Policy name and version; priority rule name/expression |
 | `limits` | Effective execution limits |
 | `events` | Entire successful action history, including order acceptance, in increasing `sequence` order |
 | `final_state` | Full state at stop, including served orders and any tasks/equipment still occupied |
@@ -100,8 +96,7 @@ for each start comes from the embedded recipe definition.
 
 `result.status` is `completed`, `stopped` or `failed`; `completed` means every order
 was served, including any late dishes. `termination_reason` reports `completed`,
-`action_limit`, `simulated_time_limit`, `no_progress`, or the agent controller's
-limit/provider/configuration reason. Unexpected execution exceptions produce a
+`action_limit`, `simulated_time_limit`, or `no_progress`. Unexpected execution exceptions produce a
 `failed` replay with `execution_error` and a sanitized exception class. A failed
 episode is still HTTP `200` because the replay was created successfully.
 
@@ -136,19 +131,48 @@ orders can arrive while cooking, and the priority scheduler dispatches them on i
 | `POST /sessions/{id}/orders` | `{"menu": "lemon_pasta", "time_limit": 900, "quantity": 1}` | `201` `{"time": 200, "orders": [...]}` | `400`, `404`, `422` |
 | `POST /sessions/{id}/chef-hold` | `{"seconds": 60}` | `200` hold status | `400`, `404`, `422` |
 | `DELETE /sessions/{id}/chef-hold` | none | `200` hold status | `404` |
-| `POST /sessions/{id}/messages` | `{"text": "레몬 파스타 하나요"}` | `200` `{"reply": "...", "actions": [...], "failed": false}` | `400`, `404`, `409` still answering, `422`, `429` too many messages |
+| `POST /sessions/{id}/messages` | `{"text": "레몬 파스타 하나요", "language": "ko"}` | `200` `{"reply": "...", "actions": [...], "failed": false}` | `400`, `404`, `409` still answering, `422`, `429` too many messages |
 | `GET /sessions/{id}/state` | none | `200` time, idle, chef hold, all orders, resources, running tasks | `404` |
 | `GET /sessions/{id}/events?after=0` | none | `200` server-sent simulator events | `404`, `422` |
 
-Messages go to the host LLM and can incur provider charges. Its tools are `place_order` and
+Messages go to the OpenAI SDK waiter team and can incur provider charges. Waiter tools are `place_order` and
 `get_order_status`, and code validates each call against the live session. `actions` lists what
 actually happened, built by code rather than taken from the model's reply. If the model fails,
 the response is still `200` with a fixed reply and `failed: true`, and cooking is unaffected.
-Small talk costs chef time. The host marks it with `note_small_talk`, and code decides what follows:
-a chef chats and is held for 30 simulated seconds per turn, for up to 3 turns. After that, or if
-holding would make an on-time order late, a free chef takes over once (`hand_off`). If nobody is free,
-or the second chef's turns run out too, the host ends the conversation (`end`). The budget refills after
-300 simulated seconds without small talk. `speaker` names the chef answering.
+The waiters can also call `ask_kitchen`, an SDK agent tool for the read-only
+KitchenAdvisorAgent. Recommendations can check registered ingredients and current
+queue estimates; the advisor returns findings to the waiter and cannot place orders.
+Successful child completion adds action `kitchen_consulted` with nullable `table_id`.
+`GET /sessions/{id}/messages/progress` returns `{"busy":true,"progress":{"turn":1,
+"phase":"checking","speaker":"waiter_a"}}` while a consultation is running.
+Other phases are `checked` and `unavailable`; `progress` is null if there is no
+consultation for the current message. The final message reply includes the same
+nullable `progress` field. Polling this read-only endpoint does not call a model.
+`speaker` remains the calling waiter. Simple orders skip the advisor. The menu includes
+`fig_pasta` (Fig Pasta / 무화과 파스타): figs, butter, cheese and basil with spaghetti,
+water and salt. `/menus` and session recipes include it automatically.
+
+The default team does not hold chefs for conversation. `speaker` is `waiter_a`, `waiter_b`,
+or `manager`. A waiter calls the SDK handoff `call_manager` for complaints and service
+exceptions. Manager tools additionally inspect service state and reassign the current
+table's waiter. Actions include `manager_called` and `waiter_reassigned` with `table_id`
+and, for reassignment, `waiter_id`. Table histories and order status are scoped separately.
+The legacy explicit chef-hold endpoints below remain available.
+
+| Dining-room endpoint | Body | Result |
+| --- | --- | --- |
+| `GET /sessions/{id}/restaurant` | none | active_table, tables, waiters, delivered |
+| `POST /sessions/{id}/restaurant/seat` | `{"seat_id":"seat.hall.1.a"}` | updated restaurant state; 422 invalid seat, 409 while answering |
+| `DELETE /sessions/{id}/restaurant/seat` | none | leave chair, retain table orders; 409 while answering |
+| `POST /sessions/{id}/restaurant/arrivals` | `{"waiter_id":"waiter_a","task_id":1,"language":"ko"}` | restaurant and optional localized notice; 409 obsolete task |
+
+Restaurant state has `tables` (id, seat_id, waiter_id, seated, greeted, order_ids),
+`waiters` (id, carrying, task) and `delivered` keyed by order ID (table_id, seat_id,
+waiter_id). A task has id, kind (`greet`, `pickup`, `deliver`), table_id and nullable
+order_id. The renderer acknowledges a task only on reaching its destination.
+Kitchen `served` means ready at pass; only `delivered` confirms table delivery.
+Direct `/orders` requests while seated also bind their orders to the active table.
+See [restaurant team](../../../../../docs/restaurant-team.md) for lifecycle and limits.
 
 `POST /sessions` also returns `initial_state` and `recipes`, so clients can rebuild state from
 events. Check the host with `python -m evaluation.host_eval`, which makes live provider calls.
@@ -169,3 +193,7 @@ The kitchen advances whenever a session is read or written, so results do not de
 often clients poll. Given the same arrival times, a session produces the same events as
 `run_priority_episode`. Sessions are in-memory, are never removed until restart, and need one
 server process.
+
+Messages accept optional `language: "ko" | "en"` to select the staff reply and fallback language per turn. Omit it (or pass null) to retain automatic language matching. The game offers 한국어/English and remembers the UI choice locally; switching languages keeps the current session and conversation history.
+
+Game sessions send `equipment: "expanded"` to `POST /sessions`: 6 burners, 3 pots, and 3 pans. The default `"standard"` retains the existing single-unit simulation. Expanded `task_started` events include concrete `resources`; the client uses these for replay ownership and the matching cookware animation. Held equipment stays with its order until the recipe's named next step.

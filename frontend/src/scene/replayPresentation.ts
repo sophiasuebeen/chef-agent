@@ -5,8 +5,10 @@ import type { Replay, ReplayEvent, ReplayState } from '../replay';
 export const TASK_STATIONS: Readonly<Record<string, StationType>> = {
   collect_ingredients: 'pantry', prepare_mint: 'prep', crush_garlic: 'prep',
   prepare_seafood: 'prep', chop_parsley: 'prep',
+  slice_figs: 'prep', prepare_basil: 'prep',
   boil_water: 'boil', cook_pasta_halfway: 'boil', reserve_water_and_drain: 'boil',
   prepare_sauce: 'sauce', start_tomato_sauce: 'sauce', simmer_tomato_sauce: 'sauce', cook_seafood: 'sauce',
+  prepare_fig_sauce: 'sauce',
   finish_pasta: 'sauce', finish_off_heat: 'plating',
 };
 
@@ -14,11 +16,12 @@ export type ChefMotion = 'talk' | 'idle' | 'collect' | 'chop' | 'crush' | 'stir'
 const MOTIONS: Record<string, ChefMotion> = {
   collect_ingredients: 'collect', prepare_mint: 'chop', crush_garlic: 'crush',
   prepare_seafood: 'chop', chop_parsley: 'chop',
+  slice_figs: 'chop', prepare_basil: 'chop', prepare_fig_sauce: 'stir',
   reserve_water_and_drain: 'drain', prepare_sauce: 'stir', start_tomato_sauce: 'stir', cook_seafood: 'stir',
   finish_pasta: 'stir', finish_off_heat: 'plate',
 };
 const STEAMING = ['boil_water', 'cook_pasta_halfway', 'reserve_water_and_drain', 'prepare_sauce',
-  'start_tomato_sauce', 'simmer_tomato_sauce', 'cook_seafood', 'finish_pasta'];
+  'start_tomato_sauce', 'simmer_tomato_sauce', 'cook_seafood', 'prepare_fig_sauce', 'finish_pasta'];
 
 export const isChefResource = (name: string) => name === 'chef' || name.startsWith('chef_');
 
@@ -52,6 +55,8 @@ export interface ChefActivity {
   offset: [number, number];
   station: StationType;
   fromStation: StationType;
+  equipmentSlot?: number;
+  fromEquipmentSlot?: number;
   motion: ChefMotion;
   taskId: string | null;
   orderId: string | null;
@@ -61,6 +66,7 @@ export interface ChefActivity {
 
 export interface StationActivity {
   station: StationType;
+  equipmentSlot?: number;
   taskId: string;
   orderId: string;
   menu: string;
@@ -112,6 +118,11 @@ export function kitchenFrame(replay: Replay | null, state: ReplayState | null, s
   }
   const stationFor = (event: ReplayEvent | undefined): StationType =>
     event?.action === 'task_started' ? TASK_STATIONS[event.task_id] ?? 'prep' : 'pass';
+  const slotFor = (event: ReplayEvent | undefined): number | undefined => {
+    if (event?.action !== 'task_started' || !event.resources) return undefined;
+    const vessel = event.resources.find((name) => /^(pot|pan)(_|$)/.test(name));
+    return vessel ? Number(vessel.split('_')[1] ?? 1) - 1 : undefined;
+  };
   const chefs = names.map((name, index): ChefActivity => {
     const actions = actionsByChef.get(name) ?? [];
     if (state.resources[name]?.[0] === 'customer') {
@@ -134,6 +145,7 @@ export function kitchenFrame(replay: Replay | null, state: ReplayState | null, s
     // including a later action with the same timestamp but a higher sequence.
     return { name, offset: chefOffset(index, names.length), station: stationFor(latest),
       fromStation: previous ? stationFor(previous) : stationFor(latest),
+      equipmentSlot: slotFor(latest), fromEquipmentSlot: slotFor(previous),
       motion: latest.action === 'order_served' ? 'serve' : running ? MOTIONS[latest.task_id] ?? 'idle' : 'idle',
       taskId: latest.action === 'task_started' && running ? latest.task_id : null,
       orderId: latest.order_id, elapsed, travel: latest.action === 'order_served' ? 1 : Math.min(1, elapsed / 0.8) };
@@ -142,7 +154,8 @@ export function kitchenFrame(replay: Replay | null, state: ReplayState | null, s
     const startedAt = starts.find((event) => event.order_id === task.order_id && event.task_id === task.task_id)?.time ?? time;
     const duration = task.finishes_at - startedAt;
     return { station: TASK_STATIONS[task.task_id] ?? 'prep', taskId: task.task_id, orderId: task.order_id,
-      menu: menuOf(task.order_id), heated: task.resources.includes('burner'),
+      menu: menuOf(task.order_id), equipmentSlot: slotFor(starts.find((event) => event.order_id === task.order_id && event.task_id === task.task_id)),
+      heated: task.resources.some((name) => /^burner(_|$)/.test(name)),
       steam: STEAMING.includes(task.task_id),
       elapsed: time - startedAt, progress: duration > 0 ? (time - startedAt) / duration : 0 };
   });

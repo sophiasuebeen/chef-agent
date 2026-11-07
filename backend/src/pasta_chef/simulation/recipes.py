@@ -7,6 +7,7 @@ RECIPE_DIR = Path(__file__).resolve().parent.parent / "recipes"
 RECIPE_FILES = {
     "lemon_pasta": "lemon_pasta.json",
     "seafood_tomato": "seafood_tomato.json",
+    "fig_pasta": "fig_pasta.json",
 }
 
 

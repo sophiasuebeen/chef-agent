@@ -1,4 +1,5 @@
 /** Live sessions in the browser. The backend decides everything; this only rebuilds what it reports. */
+import type { Language } from './game/language';
 import type { Replay, ReplayEvent, ReplayState } from './replay';
 
 export interface LiveSessionInfo {
@@ -9,7 +10,9 @@ export interface LiveSessionInfo {
 }
 
 export interface HostAction {
-  type: 'order_accepted' | 'order_rejected' | 'small_talk';
+  type: 'order_accepted' | 'order_rejected' | 'small_talk' | 'manager_called' | 'waiter_reassigned' | 'kitchen_consulted';
+  table_id?: string | null;
+  waiter_id?: string | null;
   menu: string | null;
   quantity: number | null;
   order_ids: string[];
@@ -24,9 +27,21 @@ export interface HostReply {
   actions: HostAction[];
   failed: boolean;
   speaker: string;
+  progress?: StaffProgress | null;
 }
 
-export const chefLabel = (name: string) => name === 'chef' ? '셰프' : name.replace('chef_', '셰프 ');
+export interface StaffProgress {
+  turn: number;
+  phase: 'checking' | 'checked' | 'unavailable';
+  speaker: string;
+}
+
+export const chefLabel = (name: string, language: Language = 'ko') => {
+  if (name === 'manager') return language === 'ko' ? '매니저' : 'Manager';
+  if (name.startsWith('waiter_')) return `${language === 'ko' ? '웨이터' : 'Waiter'} ${name.slice(-1).toUpperCase()}`;
+  const label = language === 'ko' ? '셰프' : 'Chef';
+  return name === 'chef' ? label : name.replace('chef_', `${label} `);
+};
 
 export type ChatEntry =
   | { kind: 'customer'; text: string }
@@ -70,7 +85,25 @@ export const visibleActions = (actions: HostAction[]) =>
   actions.filter((action) => action.type !== 'small_talk' || action.decision !== 'chat');
 
 /** Words for what code recorded, so a card never depends on what the model said. */
-export function describeAction(action: HostAction, menuName: (menu: string) => string): string {
+export function describeAction(action: HostAction, menuName: (menu: string) => string, language: Language = 'ko'): string {
+  if (action.type === 'kitchen_consulted') return language === 'ko' ? '담당 웨이터가 주방에 확인했어요' : 'Your waiter checked with the kitchen';
+  if (action.type === 'manager_called') return language === 'ko' ? '매니저가 응대를 이어받았어요' : 'The manager has taken over';
+  if (action.type === 'waiter_reassigned') return language === 'ko'
+    ? `${chefLabel(action.waiter_id ?? 'waiter_a', language)}가 테이블을 담당해요`
+    : `${chefLabel(action.waiter_id ?? 'waiter_a', language)} is now looking after your table`;
+  if (language === 'en') {
+    if (action.type === 'small_talk') return action.decision === 'hand_off'
+      ? `${chefLabel(action.chef ?? 'chef', language)} has taken over the conversation`
+      : action.decision === 'end' ? 'The kitchen is busy; the chef has returned to cooking' : '';
+    const dish = menuName(action.menu ?? '');
+    if (action.type === 'order_accepted') {
+      const minutes = Math.max(1, Math.round((action.ready_in_seconds ?? 0) / 60));
+      return `Order accepted: ${action.quantity} × ${dish} · Ready in about ${minutes} min`;
+    }
+    if (action.reason === 'unsupported_menu') return `Cannot order: ${dish} is not on the menu`;
+    if (action.reason === 'invalid_quantity') return `Cannot order: choose 1–20 plates at a time (${dish})`;
+    return `Cannot order: ${dish}`;
+  }
   if (action.type === 'small_talk') {
     return action.decision === 'hand_off' ? `쉬고 있던 ${chefLabel(action.chef ?? 'chef')}가 대화를 이어받았어요`
       : action.decision === 'end' ? '주방이 바빠 셰프가 조리로 돌아갔어요' : '';

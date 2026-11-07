@@ -1,146 +1,116 @@
-# Pasta Chef
+# Restaurant Agent Team
 
-A simulated beach pasta restaurant with a Python kitchen, a Google ADK
-ChefAgent, and a React Three Fiber scene. The simulator owns task dependencies,
-shared equipment, simulated time, and service deadlines. Multiple orders share
-one chef, one burner, one pot, and one pan; `lemon_pasta` and `seafood_tomato`
-are the supported menus.
-Inventory is assumed sufficient; vessel contents, cooling and overcooking are
-not modeled.
+**A playable 3D beach restaurant with conversational AI staff and a kitchen simulation.**
+<p>
+  <a href="docs/images/scene-dining.png"><img src="docs/images/scene-dining.png" width="49%" alt="Restaurant dining room"></a>
+  <a href="docs/images/scene-terrace.png"><img src="docs/images/scene-terrace.png" width="49%" alt="Seaside terrace"></a>
+</p>
 
-The terminal and HTTP API support scripted, priority, and live agent modes.
-The frontend accepts orders, executes a kitchen run, and replays its complete
-event history in the existing 3D kitchen, with a final-state check against the
-backend. The scene development view remains available separately.
+Explore the dining room, take a seat, and order pasta by talking to your waiter. Watch chefs prepare your meal, ask about ingredients or recommendations, and have your food brought to the table.
 
-| Dining room | Terrace |
-| --- | --- |
-| ![Dining room at golden hour](docs/images/scene-dining.png) | ![Terrace at golden hour](docs/images/scene-terrace.png) |
+The project connects natural-language interaction to a working restaurant simulation: AI staff handle conversation and invoke validated tools, while Python code owns cooking, equipment allocation, seating, and delivery state.
 
-Scene code is in [frontend/](frontend/).
+**Demo** · Click a GIF to enlarge.
 
-## Terminal demo
+<table>
+<tr>
+<td width="50%"><a href="docs/images/staff-complaint-gameplay.gif"><img src="docs/images/staff-complaint-gameplay.gif" width="360" alt="Customer complaint leads to a manager handoff and waiter reassignment"></a><br>Complaints → manager handoff and a new waiter.</td>
+<td width="50%"><a href="docs/images/kitchen-check-gameplay.gif"><img src="docs/images/kitchen-check-gameplay.gif" width="360" alt="Customer asks why food is taking so long; waiter checks with the kitchen and returns with an estimate"></a><br>“Why so long?” → “I'll check with the kitchen.”</td>
+</tr>
+<tr>
+<td><a href="docs/images/live-cooking-gameplay.gif"><img src="docs/images/live-cooking-gameplay.gif" width="360" alt="Chefs cook pasta while live orders progress"></a><br>Live cooking and order progress.</td>
+<td><a href="docs/images/restaurant-terrace-gameplay.gif"><img src="docs/images/restaurant-terrace-gameplay.gif" width="360" alt="Walk through the dining room and explore the seaside terrace"></a><br>Dining room and seaside terrace.</td>
+</tr>
+</table>
 
-Python 3.12+ is required. Run commands from the repository root.
-The scripted simulator needs no packages or credentials:
+## Architecture
 
-```bash
-PYTHONPATH=backend/src python3 scripts/run_local.py
+```mermaid
+flowchart TD
+    Game["3D Game / Replay UI<br/>React · React Three Fiber"]
+    API["FastAPI<br/>Session and batch-run APIs"]
+
+    subgraph Backend["Python Backend"]
+        Dining["RestaurantRuntime<br/>Seating · staff tasks · table delivery"]
+        Waiters["WaiterAgent A / B<br/>Table conversation · order tools"]
+        Manager["ManagerAgent<br/>Service exceptions · waiter reassignment"]
+        Advisor["KitchenAdvisorAgent<br/>Menu facts · preparation · wait estimates"]
+        Kitchen["LiveKitchen + Dispatcher<br/>Recipe validation · scheduling · equipment"]
+    end
+
+    Game -->|"Actions and state polling"| API
+    API -->|"Cooking events via SSE"| Game
+    API --> Dining
+    API --> Waiters
+    Waiters -->|"Validated order tools"| Kitchen
+    Waiters -->|"Consultation as an agent tool"| Advisor
+    Waiters -->|"Conversation handoff"| Manager
+    Manager -->|"Reassign waiter"| Dining
+    Advisor -->|"Read facts and simulate estimates on copies"| Kitchen
+    Dining -->|"Read ready orders for delivery"| Kitchen
+    Kitchen -->|"Events and snapshots"| API
 ```
 
-Water heating overlaps mint and garlic preparation. The scripted dish is served
-at simulated second 710 against a 900-second deadline. Use `--menu seafood_tomato`
-(served at second 760) and `--time-limit 900` to configure intake.
+## Core Design Choices
 
-Local priority scheduling also needs no credentials:
+### Stateful waiters & read-only kitchen advice
 
-```bash
-PYTHONPATH=backend/src python3 scripts/run_local.py --mode priority
+Waiters retain table-scoped conversation history and place orders through validated tools. For recommendations or progress questions, they consult `KitchenAdvisorAgent`, which reads menu and order data and estimates waits on copies of the live kitchen. The waiter keeps the conversation; cooking continues independently.
+### Resource-constrained cooking
+
+Recipes are directed acyclic graphs of tasks. The simulator enforces dependencies and exclusive equipment ownership; the `Dispatcher` ranks feasible tasks with:
+
+```text
+score = -deadline - 0.001 × remaining_work + 0.00001 × background
 ```
 
-See [priority scheduling](docs/priority-scheduling.md) for rules, duration
-history, dynamic arrivals, and offline evolution.
+Higher scores run first, favoring earlier deadlines and less remaining work. Duration estimates adapt through an exponential moving average (EMA) of completed tasks' timing deviations. See [scheduling details](docs/priority-scheduling.md).
 
-## Live ChefAgent
+### Ownership
 
-Install the agent environment with [uv](https://docs.astral.sh/uv/):
+`RestaurantRuntime` owns seating, staff assignments, and delivery. Complaints trigger a handoff to `ManagerAgent`, which inspects service state and can reassign a waiter through validated tools. Agents interpret intent; runtime code enforces every state change.
 
-```bash
-uv sync --project backend --extra agent --locked
-```
 
-The current package declares `google-adk` as a base dependency. The `agent`
-extra also supplies LiteLLM and python-dotenv; only the simulator's direct
-Python execution above is independent of installed third-party packages.
+## Tech Stack
 
-Use `GOOGLE_API_KEY` / `GEMINI_API_KEY` for Gemini, or `OPENAI_API_KEY` for OpenAI.
-Export credentials or store them in a local root/backend `.env`. Existing shell
-variables win; root `.env` takes precedence over backend/.env.
-[.env.example](.env.example) lists model and episode limits. Gemini uses the
-Developer API (`GOOGLE_GENAI_USE_VERTEXAI=false`), without Google Cloud auth.
+| Layer | Technologies | Role |
+| --- | --- | --- |
+| Frontend | TypeScript, React, Vite | Game interface, conversation panels, and replay controls |
+| 3D rendering | Three.js, React Three Fiber, Drei, React Three Postprocessing | Restaurant scene, characters, cooking effects, and lighting |
+| UI state | React hooks, Zustand | Player interaction, scene settings, and client presentation state |
+| Backend | Python 3.12+, FastAPI, Pydantic, Uvicorn | Validated HTTP endpoints, live sessions, and event streaming |
+| AI staff | OpenAI Agents SDK, OpenAI models | Waiter conversations, kitchen consultation tools, and manager handoffs |
+| Simulation | Python recipe/task models and priority dispatcher | Task dependencies, equipment ownership, simulated time, and deadlines |
+| Development and verification | uv, npm, Python unittest, Node.js test runner, TypeScript | Dependency management, offline checks, and builds |
 
-```bash
-PYTHONPATH=backend/src backend/.venv/bin/python scripts/run_local.py --mode agent --model openai/gpt-4o
-```
+## Local Setup
 
-`--model` overrides `CHEF_MODEL`; omit it to use the configured model. This
-command makes real provider requests. Exit code 0 means served; deadline
-compliance is reported separately as `on_time`. See [evaluation](docs/evaluation.md)
-for smoke tests, prompt comparisons, metrics, and historical results.
+Requires **Python 3.12+**, **uv**, **Node.js 22.18+**, and an **OpenAI API key**.
 
-## HTTP API
+1. Install dependencies from the repository root:
 
-```bash
-uv sync --project backend --extra api --locked
-backend/.venv/bin/uvicorn pasta_chef.main:app --app-dir backend/src --reload
-```
+   ```bash
+   uv sync --project backend --extra agent --extra api --locked
+   npm --prefix frontend ci
+   ```
 
-Open http://127.0.0.1:8000/docs for interactive documentation; scripted/priority
-execution needs no API key. Runs are kept in process memory and disappear on restart. See
-[API endpoints and examples](backend/src/pasta_chef/api/README.md).
+2. Add your key and model to the root `.env` file:
 
-`uv sync` removes packages from extras it was not given. To use API and agent in
-the same environment, sync with `--extra api --extra agent`.
+   ```dotenv
+   OPENAI_API_KEY=your_api_key_here
+   RESTAURANT_MODEL=gpt-4o
+   ```
 
-## Frontend replay and scene
+3. Run the backend and frontend in separate terminals:
 
-Use Node.js 22.12+ and npm:
+   ```bash
+   # Terminal 1
+   backend/.venv/bin/uvicorn pasta_chef.main:app --app-dir backend/src --reload
+   ```
 
-```bash
-cd frontend
-npm ci
-npm run dev
-```
+   ```bash
+   # Terminal 2
+   npm --prefix frontend run dev
+   ```
 
-Keep the API running on `127.0.0.1:8000`, then open the local URL printed by Vite.
-Vite proxies `/api` to that server in both development and preview mode.
-The menu cards load from `GET /menus`. Select a quantity, click **주문에 추가**, review the order list, choose a scheduling mode and click **조리 시작**. Each plate becomes an independent order. Item quantities can be edited or removed; advanced settings override the default 900 simulated second deadline per item. All orders must be accepted before execution is called once; intake failure leaves the partial run unexecuted, and retry starts a fresh run.
-Use play/pause, speed, the event seek slider and previous/next event controls to
-inspect orders, current tasks and equipment in the same 3D restaurant. The chef
-moves between pantry, prep, boil, sauce, plating and pass, with articulated cooking
-poses. Background heating and steam continue while the chef works elsewhere.
-The procedural chef follows the supplied character reference; no external
-character model, animation service or new dependency is required.
-
-Use **Chef close-up** to follow the chef, or **Kitchen** for the full workspace.
-**Time (seconds)** seeks inside long tasks; the event slider and previous/next
-controls distinguish actions at the same timestamp. Pause freezes cooking motion,
-steam and flames. Seeking backward reconstructs poses and removes future dishes.
-**Jump to end** shows all served
-orders; the verification notice compares replayed state to the backend's final
-state. **Load replay** opens a completed run by ID. Agent comparison uses the
-server's configured provider and credentials and may incur provider charges.
-
-Open `?scene` for the 3D preview and its camera, time-of-day and debug controls.
-Run `npm run build` from `frontend/` to check TypeScript and create a production
-build. Run `npm test` with Node.js 22.18+ for frontend reducer tests against fresh
-API output (requires the backend environment above; no running server or credentials).
-Asset attribution is in
-[CREDITS.md](frontend/public/assets/CREDITS.md).
-
-## Offline verification
-
-Install both extras once, then use the backend virtual environment to run both
-root workflow/evaluation/scheduler tests and backend API tests:
-
-```bash
-uv sync --project backend --extra agent --extra api --locked
-backend/.venv/bin/python scripts/run_tests.py
-```
-
-For an individual suite:
-
-```bash
-PYTHONPATH=backend/src backend/.venv/bin/python -m unittest discover -s tests -v
-PYTHONPATH=backend/src backend/.venv/bin/python -m unittest discover -s backend/tests -v
-```
-
-These tests make no live model requests and need no credentials.
-
-## Documentation
-
-- [Agent instructions and current repository layout](AGENTS.md)
-- [Simulator contract](docs/backend-contract.md)
-- [Architecture and runtime behavior](docs/architecture.md)
-- [Evaluation commands, metrics, and experiment records](docs/evaluation.md)
-- [Priority scheduling and rule evolution](docs/priority-scheduling.md)
+Open **http://localhost:5173** (or the URL printed by Vite).

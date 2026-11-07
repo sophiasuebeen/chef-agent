@@ -1,9 +1,7 @@
-import json
 import random
 import unittest
 from unittest.mock import patch
 from fastapi.testclient import TestClient
-from pasta_chef.agents.chef import get_chef_instruction
 from pasta_chef.main import create_app
 from pasta_chef.simulation.kitchen import Kitchen
 from pasta_chef.simulation.observation import build_observation
@@ -13,7 +11,7 @@ from pasta_chef.simulation.scripted import run_scripted
 class MenuTests(unittest.TestCase):
     def test_registered_menus_and_fields(self):
         expected = [dict(id=menu, name=load_recipe(menu)['name'], ingredients=load_recipe(menu)['ingredients'])
-                    for menu in ('lemon_pasta', 'seafood_tomato')]
+                    for menu in ('lemon_pasta', 'seafood_tomato', 'fig_pasta')]
         response = TestClient(create_app()).get('/menus')
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json(), expected)
@@ -55,7 +53,7 @@ class SeafoodTomatoTests(unittest.TestCase):
         rng = random.Random(11)
         for episode in range(200):
             kitchen = Kitchen()
-            orders = [kitchen.add_order(rng.choice(('lemon_pasta', 'seafood_tomato')), 900)
+            orders = [kitchen.add_order(rng.choice(('lemon_pasta', 'seafood_tomato', 'fig_pasta')), 900)
                       for _ in range(rng.randint(1, 5))]
             while any(order.status != 'served' for order in orders):
                 for order in orders:
@@ -84,8 +82,30 @@ class SeafoodTomatoTests(unittest.TestCase):
             self.assertEqual({o['menu']: o['status'] for o in replay['final_orders']},
                              {'seafood_tomato': 'served', 'lemon_pasta': 'served'})
 
-    def test_agent_prompt_lists_every_accepted_menu_and_lemon_default_is_stable(self):
-        self.assertEqual(get_chef_instruction('original'), get_chef_instruction('original', ['lemon_pasta']))
-        prompt = get_chef_instruction('original', ['lemon_pasta', 'seafood_tomato'])
-        self.assertIn(json.dumps(load_recipe('lemon_pasta')), prompt)
-        self.assertIn(json.dumps(load_recipe('seafood_tomato')), prompt)
+
+class FigPastaTests(unittest.TestCase):
+    def test_fig_prep_overlaps_water_and_serves_with_resources_released(self):
+        kitchen = Kitchen()
+        order = kitchen.add_order('fig_pasta')
+        run_scripted(kitchen, order.id)
+        self.assertEqual((order.status, order.served_at, order.on_time), ('served', 715, True))
+        starts = {e['task_id']: e['time'] for e in kitchen.state.events if e['action'] == 'task_started'}
+        self.assertEqual((starts['boil_water'], starts['slice_figs'], starts['prepare_basil']), (20, 20, 55))
+        self.assertGreaterEqual(starts['prepare_fig_sauce'], starts['reserve_water_and_drain'] + 20)
+        self.assertEqual(set(order.completed_tasks), {t['id'] for t in load_recipe('fig_pasta')['tasks']})
+        self.assertTrue(all(owner is None for owner in kitchen.state.resources.values()))
+
+    def test_all_three_menus_complete_and_replay_under_both_policies(self):
+        client = TestClient(create_app())
+        for policy in ('scripted', 'priority'):
+            run_id = client.post('/runs', json=dict(chefs=2)).json()['run_id']
+            for menu in ('lemon_pasta', 'seafood_tomato', 'fig_pasta'):
+                response = client.post(f'/runs/{run_id}/orders', json=dict(menu=menu, time_limit=3000))
+                self.assertEqual(response.status_code, 201)
+            response = client.post(f'/runs/{run_id}/execute', json=dict(policy=policy, max_simulated_time=4000))
+            self.assertEqual(response.status_code, 200)
+            replay = response.json()
+            self.assertTrue(replay['result']['completed'], replay['result'])
+            self.assertEqual(len(replay['final_orders']), 3)
+            self.assertTrue(all(o['status'] == 'served' for o in replay['final_orders']))
+            self.assertIn('fig', replay['recipes']['fig_pasta']['ingredients'])

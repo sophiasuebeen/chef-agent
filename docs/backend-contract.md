@@ -148,25 +148,14 @@ No task completion automatically serves a dish or cancels a late order.
 The HTTP execution/replay schema is documented in the
 [API guide](../backend/src/pasta_chef/api/README.md#execution-and-replay-v10).
 
-ADK wrappers catch KeyError/ValueError and return
-`{ok: false, error: {type: EXCEPTION_CLASS_NAME, message: TEXT}, observation: SNAPSHOT}`.
-Successful action wrappers return `{...SIMULATOR_RESULT, observation: SNAPSHOT}`.
-get_kitchen_state returns `{ok: true, observation: SNAPSHOT}`; get_recipe(menu)
-returns `{ok: true, recipe: RECIPE, observation: SNAPSHOT}`. Infrastructure errors
-propagate to the terminal as failure. Wrappers never own cooking rules.
-
 ## Execution boundary
 
-One ADK invocation may make multiple model/tool calls. The runtime bounds total
-LLM calls, total tool attempts (including reads and rejections), simulated time,
-and wall-clock episode duration. Limits stop before the next mutation/call;
-limits and provider failures produce a failed episode, never fabricated success.
-Only a simulator order with status served means success. When no startable or
-servable action exists and tasks are running, the controller can advance time
-without a model call. With `Settings.skip_forced_moves` (default off; evaluation
-turns it on) the controller also serves finished orders and starts the only
-startable task when one order remains. All other action selection belongs to
-ChefAgent.
+The scripted and priority episodes enforce action and simulated-time limits.
+They advance at task-completion or arrival boundaries and can stop at the exact
+simulated-time cap, preserving unfinished work. Only a simulator order with
+status `served` means that a dish has been served. Cooking makes no model calls.
+Live sessions use the same priority dispatcher; conversation only adds validated
+orders or reserves/releases chefs through the session contract.
 
 ## Acceptance example
 

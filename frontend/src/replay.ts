@@ -28,7 +28,7 @@ export interface ReplayState {
 interface EventBase { sequence: number; time: number; ok: boolean }
 export type ReplayEvent = EventBase & (
   | { action: 'order_accepted'; order_id: string; menu: string; deadline: number }
-  | { action: 'task_started'; order_id: string; task_id: string; finishes_at: number; chef?: string }
+  | { action: 'task_started'; order_id: string; task_id: string; finishes_at: number; chef?: string; resources?: string[] }
   | { action: 'tasks_completed'; completed: { order_id: string; task_id: string }[] }
   | { action: 'order_served'; order_id: string; on_time: boolean }
   | { action: 'time_advanced' }
@@ -87,10 +87,10 @@ export function replayAt(replay: Replay, time: number, sequence = Infinity): Rep
       for (const [resource, owner] of Object.entries(state.resources)) {
         if (owner?.[0] !== order.id) continue;
         const hold = tasks.find((t) => t.id === owner[1])?.holds;
-        if (hold?.until === task.id && hold.resources.includes(resource)) state.resources[resource] = null;
+        if (hold?.until === task.id && hold.resources.includes(resource.replace(/_\d+$/, ''))) state.resources[resource] = null;
       }
       // Recipes say "chef" for any one free chef; with several, the event names the assigned one.
-      const resources = task.resources.map((resource) => resource === 'chef' ? event.chef ?? resource : resource);
+      const resources = event.resources ?? task.resources.map((resource) => resource === 'chef' ? event.chef ?? resource : resource);
       state.running_tasks.push({ order_id: order.id, task_id: task.id, finishes_at: event.finishes_at,
         resources, remaining_time: event.finishes_at - event.time });
       for (const resource of resources) state.resources[resource] = [order.id, task.id];
@@ -102,7 +102,7 @@ export function replayAt(replay: Replay, time: number, sequence = Infinity): Rep
         const kept = replay.recipes[order.menu]!.tasks.find((t) => t.id === task.task_id)?.holds?.resources ?? [];
         for (const resource of task.resources) {
           const owner = state.resources[resource];
-          if (owner?.[0] === task.order_id && owner[1] === task.task_id && !kept.includes(resource)) state.resources[resource] = null;
+          if (owner?.[0] === task.order_id && owner[1] === task.task_id && !kept.includes(resource.replace(/_\d+$/, ''))) state.resources[resource] = null;
         }
         state.running_tasks = state.running_tasks.filter((t) => t !== task);
       }

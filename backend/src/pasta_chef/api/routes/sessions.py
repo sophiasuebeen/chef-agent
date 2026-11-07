@@ -6,7 +6,7 @@ from fastapi import APIRouter, Body, Depends, Header, HTTPException, Query, Requ
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field, StrictInt, StrictStr, field_validator
 
-from pasta_chef.agents.host import FALLBACK_REPLY, MessageLimitReached, available_menus, create_host
+from pasta_chef.agents.host import MessageLimitReached, available_menus, create_host, fallback_reply
 from pasta_chef.api.errors import error_responses, safe_text
 from pasta_chef.config import ConfigurationError
 from pasta_chef.api.schemas import ChefCount, OrderCreate, OrderResponse, RunningTaskResponse
@@ -20,6 +20,7 @@ class SessionCreate(BaseModel):
     speed: Annotated[float, Field(gt=0, le=1000, allow_inf_nan=False,
                                   description="Simulated seconds per real second.")] = 10
     chefs: ChefCount = 1
+    equipment: Literal["standard", "expanded"] = "standard"
 
 
 class InitialKitchen(BaseModel):
@@ -40,6 +41,7 @@ class SessionCreated(BaseModel):
 class MessageCreate(BaseModel):
     model_config = ConfigDict(extra="forbid")
     text: Annotated[StrictStr, Field(min_length=1, max_length=500)]
+    language: Literal["ko", "en"] | None = None
 
     @field_validator("text")
     @classmethod
@@ -51,7 +53,9 @@ class MessageCreate(BaseModel):
 
 class HostAction(BaseModel):
     """What actually happened, reported by code rather than by the model."""
-    type: Literal["order_accepted", "order_rejected", "small_talk"]
+    type: Literal["order_accepted", "order_rejected", "small_talk", "manager_called", "waiter_reassigned", "kitchen_consulted"]
+    table_id: str | None = None
+    waiter_id: str | None = None
     menu: str | None = None
     quantity: int | None = None
     decision: Literal["chat", "hand_off", "end"] | None = None
@@ -61,11 +65,23 @@ class HostAction(BaseModel):
     reason: str | None = None
 
 
+class StaffProgress(BaseModel):
+    turn: int
+    phase: Literal["checking", "checked", "unavailable"]
+    speaker: str
+
+
+class MessageProgress(BaseModel):
+    busy: bool
+    progress: StaffProgress | None = None
+
+
 class MessageReply(BaseModel):
     reply: str
     actions: list[HostAction]
     failed: bool
     speaker: str = "chef"
+    progress: StaffProgress | None = None
 
 
 class SessionOrderCreate(OrderCreate):
@@ -98,6 +114,18 @@ class SessionState(BaseModel):
     running_tasks: list[RunningTaskResponse]
 
 
+class SeatCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    seat_id: Annotated[StrictStr, Field(max_length=40)]
+
+
+class StaffArrival(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    waiter_id: Literal["waiter_a", "waiter_b"]
+    task_id: Annotated[StrictInt, Field(gt=0)]
+    language: Literal["ko", "en"] = "ko"
+
+
 async def get_session(session_id: str, request: Request) -> LiveSession:
     try:
         return request.app.state.sessions.get(session_id)
@@ -108,12 +136,44 @@ async def get_session(session_id: str, request: Request) -> LiveSession:
 Session = Annotated[LiveSession, Depends(get_session)]
 
 
+@router.get("/sessions/{session_id}/restaurant", responses=error_responses(404, 422))
+async def get_restaurant(session: Session) -> dict:
+    """Dining-room assignments, movement tasks and actual table deliveries."""
+    return session.restaurant.snapshot()
+
+
+@router.post("/sessions/{session_id}/restaurant/seat", responses=error_responses(404, 409, 422))
+async def seat_customer(body: SeatCreate, session: Session) -> dict:
+    if session.host_busy:
+        raise HTTPException(status_code=409, detail="Please wait until the staff finishes answering.")
+    try:
+        return session.restaurant.seat(body.seat_id)
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from None
+
+
+@router.delete("/sessions/{session_id}/restaurant/seat", responses=error_responses(404, 409, 422))
+async def leave_seat(session: Session) -> dict:
+    if session.host_busy:
+        raise HTTPException(status_code=409, detail="Please wait until the staff finishes answering.")
+    session.restaurant.leave()
+    return session.restaurant.snapshot()
+
+
+@router.post("/sessions/{session_id}/restaurant/arrivals", responses=error_responses(404, 409, 422))
+async def staff_arrived(body: StaffArrival, session: Session) -> dict:
+    try:
+        return session.restaurant.arrive(body.waiter_id, body.task_id, body.language)
+    except ValueError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from None
+
+
 @router.post("/sessions", status_code=status.HTTP_201_CREATED, response_model=SessionCreated,
              responses=error_responses(422))
 async def create_session(request: Request,
                          body: Annotated[SessionCreate, Body()] = SessionCreate()) -> dict:
     """Start a kitchen whose clock runs from now."""
-    session_id = request.app.state.sessions.create(body.speed, body.chefs)
+    session_id = request.app.state.sessions.create(body.speed, body.chefs, body.equipment)
     resources = request.app.state.sessions.get(session_id).snapshot()["resources"]
     return dict(session_id=session_id, speed=body.speed, recipes=available_menus(),
                 initial_state=dict(time=0, orders=[], resources=resources, running_tasks=[]))
@@ -129,6 +189,7 @@ async def create_orders(body: SessionOrderCreate, session: Session) -> dict:
         raise  # An unreadable recipe file is a server fault, despite subclassing ValueError.
     except ValueError as error:
         raise HTTPException(status_code=422, detail=safe_text(str(error))) from error
+    session.restaurant.remember_orders(session.restaurant.active_table, [order.id for order in accepted])
     state = session.snapshot()
     ids = {order.id for order in accepted}
     return dict(time=state["time"], orders=[o for o in state["orders"] if o["id"] in ids])
@@ -148,6 +209,13 @@ async def release_chef(session: Session) -> dict:
     return session.release_chef()
 
 
+@router.get("/sessions/{session_id}/messages/progress", response_model=MessageProgress,
+            responses=error_responses(404, 422))
+async def message_progress(session: Session) -> dict:
+    """Actual kitchen consultation progress, readable while a reply is running."""
+    return dict(busy=session.host_busy, progress=getattr(session.host, "progress", None))
+
+
 @router.post("/sessions/{session_id}/messages", response_model=MessageReply,
              responses=error_responses(400, 404, 409, 422, 429))
 async def send_message(body: MessageCreate, session: Session, request: Request) -> dict:
@@ -161,7 +229,9 @@ async def send_message(body: MessageCreate, session: Session, request: Request) 
             try:
                 session.host = factory(session)
             except ConfigurationError:
-                return dict(reply=FALLBACK_REPLY, actions=[], failed=True)
+                return dict(reply=fallback_reply([], body.language), actions=[], failed=True)
+        if body.language is not None:
+            return await session.host.reply(body.text, language=body.language)
         return await session.host.reply(body.text)
     except MessageLimitReached:
         raise HTTPException(status_code=429, detail="Too many messages in this session.") from None

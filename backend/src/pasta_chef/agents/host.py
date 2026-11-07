@@ -55,15 +55,19 @@ def available_menus() -> dict:
     return menus
 
 
-def get_host_instruction(menus: dict) -> str:
+def get_host_instruction(menus: dict, language: str | None = None) -> str:
     # Plain lines, not JSON: ADK treats curly braces in an instruction as template variables.
     menu_lines = "\n".join(
         f"- menu_id {menu}: {recipe['name']} (ingredients: {', '.join(recipe['ingredients'])})"
         for menu, recipe in menus.items())
+    language_rule = {
+        "ko": "Reply in Korean for this turn, regardless of the customer's message language. ",
+        "en": "Reply in English for this turn, regardless of the customer's message language. ",
+    }.get(language, "Reply in the language of the customer's latest message: Korean to Korean, "
+                     "English to English, never another language. ")
     return (
         "You are the chef of a small beach pasta restaurant, chatting with a customer at the "
-        "counter. Reply in the language of the customer's latest message: Korean to Korean, English "
-        "to English, never another language. Be warm, in one or two short sentences.\n\n"
+        "counter. " + language_rule + "Be warm, in one or two short sentences.\n\n"
         "This is the entire menu:\n" + menu_lines + "\n\n"
         "Rules:\n"
         "- When the customer clearly asks for dishes on the menu, call place_order once per "
@@ -92,12 +96,16 @@ def _load_provider_libraries():
     import google.adk.agents  # noqa: F401
     import google.adk.runners  # noqa: F401
     import google.adk.sessions  # noqa: F401
-    from pasta_chef.agents.chef import resolve_model
+    from pasta_chef.agents.models import resolve_model
     resolve_model("openai/placeholder")  # Also loads the LiteLLM client path.
 
 
-def fallback_reply(actions: list[dict]) -> str:
+def fallback_reply(actions: list[dict], language: str | None = None) -> str:
     """Tell the truth from what code recorded when the model cannot answer."""
+    if language == "en":
+        if any(action["type"] == "order_accepted" for action in actions):
+            return "Your order is confirmed. We'll start preparing it now!"
+        return "Sorry, I cannot reply right now. Please try again shortly."
     if any(action["type"] == "order_accepted" for action in actions):
         return "주문 받았어요. 바로 준비할게요!"
     return FALLBACK_REPLY
@@ -114,6 +122,7 @@ class HostAgent:
         self._classifier = None
         self._base_instruction = get_host_instruction(self.menus)
         self._turn_note = ""
+        self._language = None
         self._agent = None
         self._conversations = None
         self._conversation_id = None
@@ -160,7 +169,8 @@ class HostAgent:
 
     def _instruction(self, context=None) -> str:
         """Rebuilt for each model call, so it can carry this turn's kitchen note."""
-        return "\n\n".join(part for part in (self._base_instruction, self._turn_note) if part)
+        base = get_host_instruction(self.menus, self._language) if self._language else self._base_instruction
+        return "\n\n".join(part for part in (base, self._turn_note) if part)
 
     async def _label_message(self, text) -> str:
         """small_talk, kitchen or other. A failure counts as other, which spends no budget."""
@@ -178,7 +188,7 @@ class HostAgent:
         from google.adk.runners import Runner
         from google.adk.sessions import InMemorySessionService
         from google.genai import types
-        from pasta_chef.agents.chef import resolve_model
+        from pasta_chef.agents.models import resolve_model
         if self._classifier is None:
             self._classifier = Agent(
                 name="MessageLabel", model=resolve_model(self._model, uses_tools=False, max_retries=1),
@@ -201,7 +211,7 @@ class HostAgent:
         from google.adk.agents import Agent
         from google.adk.sessions import InMemorySessionService
         from google.genai import types
-        from pasta_chef.agents.chef import resolve_model
+        from pasta_chef.agents.models import resolve_model
         self._conversations = InMemorySessionService()
         self._agent = Agent(
             name="HostAgent",
@@ -245,10 +255,13 @@ class HostAgent:
             self._turn_note = " ".join(part for part in (helper, SMALL_TALK_NOTES[outcome["decision"]]) if part)
         return await self._converse(text)
 
-    async def reply(self, text: str) -> dict:
+    async def reply(self, text: str, *, language: str | None = None) -> dict:
         """Answer one message. A model failure never reaches the kitchen or the customer."""
         if self.messages >= MAX_MESSAGES_PER_SESSION:
             raise MessageLimitReached
+        if language not in (None, "ko", "en"):
+            raise ValueError("Unsupported conversation language.")
+        self._language = language
         self.messages += 1
         self._actions, self._placed_this_turn, self._turn_note = [], {}, ""
         reply, failed = "", False
@@ -258,15 +271,11 @@ class HostAgent:
             # Provider messages can hold account details, so log only the failure's type.
             logger.warning("Host reply failed: %s", type(error).__name__)
             failed = True
-        return dict(reply=reply or fallback_reply(self._actions), actions=self._actions,
+        return dict(reply=reply or fallback_reply(self._actions, self._language), actions=self._actions,
                     failed=failed or not reply, speaker=self.session.talking_chef or "chef")
 
 
 def create_host(session) -> HostAgent:
-    """The configured host. CHEF_HOST_MODEL overrides CHEF_MODEL. Fails without credentials."""
-    import os
-    from pasta_chef.config import Settings, require_model_credentials
-    settings = Settings.from_env()
-    model = os.getenv("CHEF_HOST_MODEL") or settings.model
-    require_model_credentials(model)
-    return HostAgent(session, model)
+    """Default live conversation now belongs to the OpenAI restaurant staff team."""
+    from pasta_chef.agents.team import create_team
+    return create_team(session)

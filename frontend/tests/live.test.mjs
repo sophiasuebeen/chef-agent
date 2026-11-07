@@ -15,12 +15,12 @@ from pasta_chef.main import create_app
 from pasta_chef.runtime.sessions import SessionStore
 
 results = []
-for chefs in (1, 2):
+for chefs, equipment in ((1, 'standard'), (2, 'standard'), (4, 'expanded')):
     now = [0.0]
     app = create_app()
     app.state.sessions = SessionStore(clock=lambda: now[0])
     client = TestClient(app)
-    info = client.post('/sessions', json=dict(speed=10, chefs=chefs)).json()
+    info = client.post('/sessions', json=dict(speed=10, chefs=chefs, equipment=equipment)).json()
     path = f"/sessions/{info['session_id']}"
     moments = []
     session = app.state.sessions.get(info['session_id'])
@@ -99,4 +99,25 @@ test('order cards say what code recorded', () => {
   assert.match(describeAction({ ...base, type: 'order_accepted', menu: 'lemon_pasta', quantity: 1, ready_in_seconds: 5 }, name), /약 1분/);
   assert.match(describeAction({ ...base, type: 'order_rejected', menu: 'pizza', quantity: 1, reason: 'unsupported_menu' }, name), /메뉴에 없는.*pizza/);
   assert.match(describeAction({ ...base, type: 'order_rejected', menu: 'lemon_pasta', quantity: 100, reason: 'invalid_quantity' }, name), /1~20접시/);
+});
+
+
+test('expanded equipment heats the assigned vessel and shows simultaneous stations', () => {
+  const { info, events } = scenarios[2];
+  const replay = liveReplay(info, events, events.at(-1).time);
+  let sawConcurrentPots = false;
+  for (const event of events) {
+    const state = replayAt(replay, event.time, event.sequence);
+    const frame = kitchenFrame(replay, state, event.sequence);
+    const pots = frame.stations.filter((item) => item.station === 'boil');
+    if (pots.length > 1) {
+      sawConcurrentPots = true;
+      assert.equal(new Set(pots.map((item) => item.equipmentSlot)).size, pots.length);
+      assert.ok(pots.every((item) => item.equipmentSlot >= 0 && item.equipmentSlot < 3));
+    }
+    for (const task of state.running_tasks.filter((task) => task.resources.some((name) => /^burner(_|$)/.test(name)))) {
+      assert.equal(frame.stations.find((item) => item.taskId === task.task_id && item.orderId === task.order_id).heated, true);
+    }
+  }
+  assert.ok(sawConcurrentPots);
 });

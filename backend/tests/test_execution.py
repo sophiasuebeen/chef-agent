@@ -2,7 +2,7 @@
 from copy import deepcopy
 from dataclasses import asdict
 import unittest
-from unittest.mock import AsyncMock, patch
+from unittest.mock import patch
 
 from fastapi.testclient import TestClient
 
@@ -105,7 +105,7 @@ class ExecutionReplayTests(unittest.TestCase):
         kitchen = self.app.state.runs.get(run_id).kitchen
         before = deepcopy(kitchen.state)
         self.assertEqual(self.client.get(f'/runs/{run_id}/replay').status_code, 409)
-        for options in ({'policy': 'random'}, {'max_actions': 0}, {'max_actions': True},
+        for options in ({'policy': 'agent'}, {'policy': 'random'}, {'max_actions': 0}, {'max_actions': True},
                         {'max_actions': 10001}, {'max_simulated_time': 0},
                         {'max_simulated_time': 86401}, {'max_simulated_time': 1.5},
                         {'unexpected': 1}):
@@ -143,20 +143,6 @@ class ExecutionReplayTests(unittest.TestCase):
             self.assertEqual(self.execute(target).status_code, 200)
         self.assertFalse(run.lock.locked())
 
-    def test_agent_mode_delegates_to_existing_controller_without_live_calls(self):
-        from pasta_chef.config import Settings
-        from pasta_chef.simulation.scripted import run_scripted_episode
-        async def offline_controller(kitchen, settings):
-            self.assertEqual(settings.max_tool_calls, 42)
-            self.assertEqual(settings.max_simulated_time, 1000)
-            return run_scripted_episode(kitchen, max_actions=42, max_simulated_time=1000)
-        with patch('pasta_chef.config.Settings.from_env', return_value=Settings()), \
-             patch('pasta_chef.runtime.controller.run_agent_episode', new=AsyncMock(side_effect=offline_controller)) as controller:
-            replay = self.execute(self.new_run(), policy='agent', max_actions=42, max_simulated_time=1000).json()
-        controller.assert_awaited_once()
-        self.assertTrue(replay['result']['completed'])
-        self.assertEqual(replay['scheduling_policy']['model'], 'gemini-2.5-flash')
-        self.assertEqual(replay['scheduling_policy']['prompt_variant'], 'original')
 
     def test_execution_failure_is_replayable_without_leaking_exception_text(self):
         run_id = self.new_run()

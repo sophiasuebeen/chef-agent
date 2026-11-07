@@ -5,3 +5,12 @@
 __pycache__/
 *.py[cod]
 .vscode/
+reports/
+docs/*
+!docs/images/
+docs/images/*
+!docs/images/staff-complaint-gameplay.gif
+!docs/images/live-cooking-gameplay.gif
+!docs/images/restaurant-terrace-gameplay.gif
+!docs/images/kitchen-check-gameplay.gif
+AGENTS.md

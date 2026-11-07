@@ -4,7 +4,6 @@ import unittest
 
 from fastapi.testclient import TestClient
 
-from pasta_chef.agents.chef import get_chef_instruction
 from pasta_chef.main import create_app
 from pasta_chef.runtime.sessions import LiveKitchen, SessionStore
 from pasta_chef.simulation.kitchen import Kitchen, chef_names, free_chef
@@ -109,13 +108,6 @@ class ChefResourceTests(unittest.TestCase):
             self.assertTrue(own)
             for before, after in zip(own, own[1:]):
                 self.assertLessEqual(before["finishes_at"], after["time"])
-
-    def test_prompt_is_unchanged_for_one_chef_and_explains_several(self):
-        self.assertEqual(get_chef_instruction("original"), get_chef_instruction("original", chefs=1))
-        self.assertIn("single chef", get_chef_instruction("original"))
-        prompt = get_chef_instruction("deadline", chefs=3)
-        self.assertNotIn("single chef", prompt)
-        self.assertIn("direct 3 chefs", prompt)
 
 
 class ChefApiTests(unittest.TestCase):

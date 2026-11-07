@@ -12,6 +12,7 @@ dependencies = [
 agent = [
     "google-adk>=1.18,<2",
     "litellm>=1.83.7,<=1.83.14",
+    "openai-agents>=0.10,<1",
     "python-dotenv>=1,<2",
 ]
 api = [

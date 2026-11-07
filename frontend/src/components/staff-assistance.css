@@ -1,0 +1,19 @@
+.staff-notification { position: fixed; z-index: 30; top: 50%; left: 50%; transform: translate(-50%, -50%); display: flex; align-items: center; gap: 13px; width: max-content; max-width: min(460px, calc(100vw - 32px)); box-sizing: border-box; padding: 18px 16px 18px 19px; background: #fffdf5f2; color: #293d35; border: 1px solid #ffffffd9; border-radius: 16px; box-shadow: 0 12px 44px #17261f45, 0 0 32px #ffffff55; font: 14px/1.5 ui-sans-serif, -apple-system, sans-serif; user-select: text; animation: staff-notification-arrive 360ms cubic-bezier(.2,.8,.2,1) both; }
+.staff-notification strong { display: block; font-size: 15px; }
+.staff-notification p { margin: 4px 0 0; color: #617166; font-size: 13px; }
+.staff-notification button { align-self: flex-start; border: 0; background: transparent; color: #526757; padding: 0 5px; font-size: 20px; cursor: pointer; }
+.staff-notification-icon { display: grid; place-items: center; flex: 0 0 22px; height: 22px; color: #35734e; border-radius: 50%; background: #e5efdf; font-weight: 700; }
+.staff-notification-icon.spinning { flex-basis: 18px; height: 18px; border: 2px solid #c5d7be; border-top-color: #35734e; background: transparent; animation: staff-checking 1s linear infinite; }
+.staff-notification.unavailable { border-color: #ddc7a8; }
+@keyframes staff-checking { to { transform: rotate(360deg); } }
+@keyframes staff-notification-arrive { from { opacity: 0; transform: translate(-50%, calc(-50% + 10px)) scale(.97); } to { opacity: 1; transform: translate(-50%, -50%) scale(1); } }
+@media (prefers-reduced-motion: reduce) { .staff-notification-icon.spinning, .staff-notification { animation: none; } }
+@media (max-width: 760px) { .staff-notification { max-width: calc(100vw - 28px); } }
+
+.restaurant-tip { position: absolute; z-index: 12; top: 76px; left: 50%; transform: translateX(-50%); width: max-content; min-width: 330px; max-width: min(560px, calc(100vw - 360px)); box-sizing: border-box; padding: 11px 24px; border: 1px solid #ffffff55; border-radius: 8px; background: linear-gradient(90deg, #ffffff06, #ffffff32 18%, #ffffff32 82%, #ffffff06); color: #fffdf7; font-size: 12px; font-weight: 500; line-height: 1.6; text-align: center; text-shadow: 0 1px 4px #243b3c, 0 0 10px #ffffff50; backdrop-filter: blur(5px); pointer-events: none; animation: restaurant-tip-glow 4.5s ease-in-out infinite; }
+.restaurant-tip b { font-weight: 650; margin-right: 3px; }
+.restaurant-tip-copy { display: block; animation: restaurant-tip-appear 0.9s ease-out both; }
+@keyframes restaurant-tip-glow { 0%, 100% { opacity: 0.48; box-shadow: 0 0 10px #ffffff0a, inset 0 0 10px #ffffff0a; } 50% { opacity: 0.95; box-shadow: 0 0 24px #ffffff42, inset 0 0 16px #ffffff1c; } }
+@keyframes restaurant-tip-appear { from { opacity: 0; } to { opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { .restaurant-tip, .restaurant-tip-copy { animation: none; } .restaurant-tip { opacity: 0.85; } }
+@media (max-width: 760px) { .restaurant-tip { top: 150px; left: 14px; transform: none; min-width: 0; width: calc(100vw - 190px); max-width: 300px; padding: 9px 11px; font-size: 11px; } }

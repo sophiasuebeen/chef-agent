@@ -135,5 +135,5 @@ worse than EDD on held-out cases; evolution is not a guarantee of improvement.
 This milestone does not model table plate synchronization, hold quality, inventory,
 station breakdowns, or live exception handling. Adding those requires simulator
 contracts and meaningful metrics first. Synthetic cases are not calibrated real
-service logs. The existing `--mode agent` live planner remains available as a
-separate comparison mode; API/frontend behavior has not been switched.
+service logs. The batch API offers scripted and priority execution; live sessions use the
+same priority dispatcher. Customer conversation is a separate LLM responsibility.

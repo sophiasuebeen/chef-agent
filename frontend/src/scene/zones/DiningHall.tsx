@@ -400,7 +400,9 @@ const hallSeatPlateIds = new Set(
 const hallPlates = plates.filter((plate) => hallSeatPlateIds.has(plate.id.replace(/\.(plate|pasta)$/, '')));
 const hallPlacements = [...tablePlacements(hallTables), ...hallPlates, ...hallTableSettings, ...decor];
 
-export function DiningHall() {
+const hallGamePlacements = hallPlacements.filter((placement) => !placement.assetId.startsWith('food.'));
+
+export function DiningHall({ showDemoFood = true }: { showDemoFood?: boolean }) {
   return (
     <group name="zone.hall">
       <StaticMesh build={buildFloor} material="marbleFloor" castShadow={false} />
@@ -416,7 +418,7 @@ export function DiningHall() {
       {hallTables.map((table) => (
         <TableSet key={table.id} table={table} />
       ))}
-      <PlacedAssets placements={hallPlacements} />
+      <PlacedAssets placements={showDemoFood ? hallPlacements : hallGamePlacements} />
       <WarmLights placements={warmLights} />
     </group>
   );

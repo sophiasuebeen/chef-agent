@@ -71,6 +71,25 @@ class HostTests(unittest.IsolatedAsyncioTestCase):
     def orders(self):
         return self.session.snapshot()["orders"]
 
+    async def test_language_can_change_without_resetting_the_conversation(self):
+        host = self.host("Hello!", "안녕하세요!", "Hello again!")
+        await host.reply("안녕", language="en")
+        self.assertIn("Reply in English for this turn", host._instruction())
+        conversation = host._conversation_id
+        await host.reply("hello", language="ko")
+        self.assertIn("Reply in Korean for this turn", host._instruction())
+        self.assertNotIn("Reply in English for this turn", host._instruction())
+        self.assertEqual(host._conversation_id, conversation)
+        await host.reply("hello")
+        self.assertNotIn("for this turn, regardless", host._instruction())
+
+    async def test_english_fallback_preserves_accepted_orders(self):
+        host = self.host(order(), RuntimeError("offline"))
+        result = await host.reply("레몬 파스타 하나", language="en")
+        self.assertTrue(result["failed"])
+        self.assertIn("Your order is confirmed", result["reply"])
+        self.assertEqual(result["actions"][0]["type"], "order_accepted")
+
     async def test_accepted_order_reaches_the_kitchen_and_is_reported_by_code(self):
         result = await self.host(order(quantity=2), "두 접시 주문 받았어요!").reply("레몬 파스타 2개요")
         self.assertEqual(result["reply"], "두 접시 주문 받았어요!")
@@ -355,6 +374,24 @@ class MessageApiTests(unittest.TestCase):
         self.assertFalse(body["failed"])
         state = self.client.get(f"/sessions/{self.session_id}/state").json()
         self.assertEqual(state["orders"][0]["status"], "cooking")
+
+    def test_language_reaches_the_host_and_can_switch_in_the_same_session(self):
+        self.script += ["Hello!", "안녕하세요!"]
+        for language, expected in (("en", "English"), ("ko", "Korean")):
+            response = self.client.post(self.path, json=dict(text="hello", language=language))
+            self.assertEqual(response.status_code, 200)
+            host = self.app.state.sessions.get(self.session_id).host
+            self.assertIn(f"Reply in {expected} for this turn", host._instruction())
+
+    def test_language_is_validated_and_missing_credentials_use_english(self):
+        from pasta_chef.config import ConfigurationError
+        for language in ("fr", "", 1, {"en": True}):
+            self.assertEqual(self.client.post(self.path, json=dict(text="hello", language=language)).status_code, 422)
+        self.app.state.host_factory = lambda session: (_ for _ in ()).throw(ConfigurationError("missing"))
+        response = self.client.post(self.path, json=dict(text="hello", language="en"))
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.json()["failed"])
+        self.assertIn("Sorry", response.json()["reply"])
 
     def test_invalid_messages(self):
         for body in (dict(text=""), dict(text="   "), dict(text="가" * 501), dict(text=1), dict(),

@@ -57,7 +57,7 @@ export function Cookware({ kind, activity, time }: { kind: 'pot' | 'pan'; activi
         : <mesh position={[0.30, 0.045, 0]} rotation-z={-0.06}><boxGeometry args={[0.27, 0.035, 0.045]} /><meshStandardMaterial color="#303b43" roughness={0.65} /></mesh>}
       {activity && <mesh position={[0, kind === 'pot' ? 0.15 : 0.047, 0]} rotation-x={-Math.PI / 2}>
         <circleGeometry args={[kind === 'pot' ? 0.145 : 0.16, 32]} /><meshStandardMaterial
-          color={kind === 'pot' ? '#90c5ce' : activity.menu === 'seafood_tomato' ? '#b93a24' : '#e9cf81'} roughness={0.27} transparent opacity={0.85} /></mesh>}
+          color={kind === 'pot' ? '#90c5ce' : activity.menu === 'seafood_tomato' ? '#b93a24' : activity.menu === 'fig_pasta' ? '#d2a387' : '#e9cf81'} roughness={0.27} transparent opacity={0.85} /></mesh>}
       <Steam time={time} active={!!activity?.steam} />
     </group>
     {draining && <group ref={stream} name="replay.drain" position={[0, 0.04, 0.2]}>

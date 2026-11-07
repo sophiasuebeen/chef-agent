@@ -27,11 +27,12 @@ for policy in ('scripted', 'priority'):
         fixtures.append(response.json())
 # Appended so index-based lemon fixtures above keep their meaning.
 for policy in ('scripted', 'priority'):
-    for menus in (['seafood_tomato'], ['seafood_tomato', 'lemon_pasta'], ['seafood_tomato', 'seafood_tomato']):
+    for menus in (['seafood_tomato'], ['seafood_tomato', 'lemon_pasta'], ['seafood_tomato', 'seafood_tomato'],
+                  ['fig_pasta'], ['fig_pasta', 'lemon_pasta', 'seafood_tomato']):
         run_id = client.post('/runs').json()['run_id']
         for menu in menus:
             client.post(f'/runs/{run_id}/orders', json={'menu': menu, 'time_limit': 900})
-        response = client.post(f'/runs/{run_id}/execute', json=dict(policy=policy))
+        response = client.post(f'/runs/{run_id}/execute', json=dict(policy=policy, max_simulated_time=4000))
         assert response.status_code == 200 and response.json()['result']['completed'], response.text
         fixtures.append(response.json())
 print(json.dumps(fixtures))
@@ -111,6 +112,7 @@ test('invalid schema or event order fails visibly and final mismatch is detected
 test('every recorded task maps to its existing kitchen station and chef-required work gets a motion', () => {
   const expected = { collect_ingredients: 'pantry', prepare_mint: 'prep', crush_garlic: 'prep',
     prepare_seafood: 'prep', chop_parsley: 'prep',
+    slice_figs: 'prep', prepare_basil: 'prep', prepare_fig_sauce: 'sauce',
     boil_water: 'boil', cook_pasta_halfway: 'boil', reserve_water_and_drain: 'boil',
     prepare_sauce: 'sauce', start_tomato_sauce: 'sauce', simmer_tomato_sauce: 'sauce', cook_seafood: 'sauce',
     finish_pasta: 'sauce', finish_off_heat: 'plating' };
@@ -201,4 +203,20 @@ test('seafood orders carry their menu to the pan and pass, separately from lemon
   const served = kitchenFrame(replay, replayAt(replay, replay.result.finished_at), end).served;
   assert.deepEqual(Object.fromEntries(served.map((s) => [s.orderId, s.menu])),
     Object.fromEntries(replay.final_orders.map((o) => [o.id, o.menu])));
+});
+
+test('fig pasta prep, sauce and plating animate and retain their menu through service', () => {
+  const replay = fixtures.find((f) => f.final_orders.length === 1 && f.final_orders[0].menu === 'fig_pasta');
+  for (const [task, station, motion] of [['slice_figs', 'prep', 'chop'], ['prepare_basil', 'prep', 'chop'],
+    ['prepare_fig_sauce', 'sauce', 'stir'], ['finish_off_heat', 'plating', 'plate']]) {
+    const start = replay.events.find((event) => event.action === 'task_started' && event.task_id === task);
+    const frame = kitchenFrame(replay, replayAt(replay, start.time + 1, start.sequence), start.sequence);
+    assert.equal(frame.chef.motion, motion);
+    const active = frame.stations.find((item) => item.taskId === task);
+    assert.equal(active.station, station);
+    assert.equal(active.menu, 'fig_pasta');
+    if (task === 'prepare_fig_sauce') assert.equal(active.steam, true);
+  }
+  const final = kitchenFrame(replay, replayAt(replay, replay.result.finished_at), replay.events.length);
+  assert.equal(final.served[0].menu, 'fig_pasta');
 });

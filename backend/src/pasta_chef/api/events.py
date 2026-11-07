@@ -1,7 +1,6 @@
 """Versioned, detached replay documents built from authoritative simulator events."""
-import asyncio
 from copy import deepcopy
-from dataclasses import asdict, replace
+from dataclasses import asdict
 
 from pasta_chef.api.schemas import ExecuteRequest, ReplayResponse
 from pasta_chef.simulation.recipes import load_recipe
@@ -27,17 +26,8 @@ def execute(kitchen, run_id: str, initial_conditions: dict, body: ExecuteRequest
             rule = PriorityRule()
             policy["rule"] = dict(name=rule.name, expression=rule.expression)
             outcome = run_priority_episode(kitchen, rule=rule, **limits)
-        elif body.policy == "scripted":
-            outcome = run_scripted_episode(kitchen, **limits)
         else:
-            # Importing/using the offline API never requires ADK or provider credentials.
-            from pasta_chef.config import Settings
-            from pasta_chef.runtime.controller import run_agent_episode
-            settings = replace(Settings.from_env(), max_tool_calls=body.max_actions,
-                               max_simulated_time=body.max_simulated_time)
-            policy.update(model=settings.model, prompt_variant="original")
-            limits.update(max_model_calls=settings.max_model_calls)
-            outcome = asyncio.run(run_agent_episode(kitchen, settings))
+            outcome = run_scripted_episode(kitchen, **limits)
     except Exception as error:
         # Never return provider exception messages, which can contain credentials.
         outcome = dict(ok=False, status="failed", termination_reason="execution_error",

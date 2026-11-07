@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Build a simulated outdoor pasta restaurant on a beach. An LLM chef operates a kitchen with recipe dependencies, limited equipment, preparation tasks, background cooking, and order deadlines.
+Build a simulated outdoor pasta restaurant on a beach. A deterministic scheduler operates a kitchen with recipe dependencies, limited equipment, preparation tasks, background cooking, and order deadlines.
 
 An optimizer-style scheduler cooks; the LLM handles only customer conversation. The eventual experience includes a 3D restaurant, ordering, watching the chef, asking about cooking, and leaving feedback. Human play and human–agent cooperation are future possibilities, not current requirements.
 
@@ -22,24 +22,19 @@ An optimizer-style scheduler cooks; the LLM handles only customer conversation. 
 The simulator implements order intake, task validation/start, event-based time
 advancement, resource release, service, reset, and detached observations.
 Multiple orders share equipment while keeping independent task progress.
-`lemon_pasta` and `seafood_tomato` are the registered menus.
+`lemon_pasta`, `seafood_tomato` and `fig_pasta` are the registered menus.
 
-Terminal modes in `scripts/run_local.py` are `scripted`, `agent`, and `priority`.
-The single ADK ChefAgent runs through a bounded controller with tool wrappers,
-provider retries, decision logs, and progress heartbeats. Evaluation compares
-prompt variants and supports offline priority-rule evolution. The priority
-scheduler supports exact-time arrivals and completed-duration EMA history;
-`Kitchen(duration_sampler=...)` optionally varies task duration at start.
-`Kitchen(chefs=n)` (1-4, default 1) makes each chef a real resource; the API and
-the order panel's 셰프 수 input pass it through.
+Terminal modes in `scripts/run_local.py` are `scripted` and `priority`.
+The priority scheduler supports exact-time arrivals, completed-duration EMA history,
+and optional sampled durations. `Kitchen(chefs=n)` supports 1–4 chefs.
 
-The development HTTP API creates in-memory runs, accepts/reads orders, exposes
-state, lists registered usable recipes through `GET /menus`, executes scripted/priority/agent episodes once, and returns frozen versioned
-replays. The React frontend accepts orders and reconstructs kitchen replay state
-with play/pause/speed/event/time seeking and a backend final-state check. The same
-cursor drives the existing 3D kitchen: procedural articulated chefs, per-station
-cooking actions, independent heating/steam and sequenced service dishes. The
-scene development view remains available at `?scene`.
+The HTTP API supports in-memory batch runs, frozen replays and live sessions.
+The default frontend is the walkable game; `?live` opens the live kitchen test
+page, `?replay` opens batch ordering/replay, and `?scene` opens scene development.
+Live cooking uses `Dispatcher`. The default OpenAI Agents SDK staff team handles
+customer conversation and validated order tools; it never chooses cooking tasks.
+`RestaurantRuntime` owns seating, A/B waiter assignment and table delivery. The previous LLM cooking
+mode, comparison runner and episode progress logs have been removed.
 
 Do not treat completed features as future milestones. Inspect code and tests
 before choosing the next bounded change. Current extensions and limitations
@@ -50,11 +45,13 @@ are documented in `docs/`, not a fixed backlog in this file.
 | Component | Responsibility |
 | --- | --- |
 | Python simulator | Authoritative state, cooking rules, equipment, timing, validation |
-| Google ADK chef | Select actions from fresh observations and tool results |
-| Runtime controller | Coordinate decisions, enforce limits, report progress |
+| OpenAI Agents SDK staff | Waiter A/B conversation, validated orders, manager handoff |
+| KitchenAdvisorAgent | Read-only menu/preparation/wait estimates, called by waiters as an SDK agent tool |
+| RestaurantRuntime | Table ownership, staff tasks, pickup and delivery |
+| Live sessions | Clock mapping, dispatch, chef conversation holds and event stream |
 | HTTP API | Isolated in-memory runs, order intake, execution and frozen replays |
 | Frontend | Order intake, deterministic replay controls and synchronized 3D kitchen |
-| Evaluation | Repeatable scenarios, prompt comparisons, metrics, rule evolution |
+| Evaluation | Deadline metrics, priority-rule evolution and host conversation cases |
 
 Simulator imports and scripted/priority execution do not require ADK, an API
 server, or a renderer. However, `backend/pyproject.toml` currently declares
@@ -69,7 +66,7 @@ Paths below are relative to the repository root:
 backend/
   src/pasta_chef/
     main.py                         # FastAPI application
-    config.py                       # Environment, model and episode limits
+    config.py                       # Environment, model and credentials
     simulation/
       models.py                     # Order, KitchenState, RunningTask
       recipes.py                    # Registered recipe loading and task lookup
@@ -80,17 +77,16 @@ backend/
     recipes/
       lemon_pasta.json
       seafood_tomato.json
+      fig_pasta.json
     agents/
-      chef.py                       # ChefAgent factory and prompt variants
+      models.py                     # Lazy provider adapters for customer conversation
       retrying_llm.py                # Bounded provider retries
-      tools/kitchen.py              # Simulator adapters, budgets and logs
-      callbacks.py                  # Placeholder
       host.py                       # Customer-facing LLM host: conversation and validated order tools
-      head_chef.py                  # Placeholder
+      team.py                       # Default OpenAI SDK manager and two waiters; legacy host stays available
+      kitchen_advisor.py            # Read-only specialist child; returns findings to its calling waiter
     runtime/
-      controller.py                 # Bounded ADK episode loop
-      progress.py                   # stderr progress and heartbeat
       sessions.py                   # Live sessions: real time to simulated time, event stream
+      restaurant.py                 # Dining-room tasks and table delivery, separate from cooking
     api/
       README.md                     # HTTP setup and endpoint contract
       routes/                       # Runs, order intake/read, state read
@@ -99,17 +95,17 @@ backend/
       errors.py
       events.py                     # Execution dispatch and replay document assembly
   tests/test_api.py
-  tests/test_execution.py            # Execution, lifecycle, replay and controller delegation
+  tests/test_execution.py            # Execution, lifecycle and replay
   README.md
   pyproject.toml
   uv.lock
 tests/
-  test_agent_workflow.py             # Simulator, wrappers, mocked ADK, retries/progress
-  test_evaluation.py
+  test_simulation.py                 # Dependencies, ownership and equipment holds
+  test_models.py                     # Host configuration and provider retries
+  test_metrics.py                    # Deadline metrics for rule evaluation
   test_priority_scheduler.py
 scripts/
   run_local.py
-  check_two_orders.py               # Explicit live two-order smoke test
   run_tests.py                      # Combined offline test report
 frontend/
   src/                              # Replay UI, scene, components, data and scene state
@@ -118,10 +114,10 @@ frontend/
     scene/kitchen/KitchenReplay.tsx # Equipment, station effects and pass dishes
   public/assets/                    # Models, textures, attribution
 evaluation/
-  run.py                            # Prompt comparison runner
+  host_eval.py                       # Explicit live conversation evaluation
+  host_cases.json
   metrics.py
   evolve.py                         # Offline priority-rule evolution
-  scenarios/
   results/                          # Historical experiment artifacts
 docs/
   architecture.md
@@ -224,35 +220,38 @@ Like lemon pasta, the pot is released before the pan is needed, so mixed orders 
 deadlock on equipment.
 
 Adding a menu means registering the recipe in `simulation/recipes.py` and mapping any new
-task IDs in `frontend/src/scene/replayPresentation.ts`. `evaluation/` stays lemon-only so
-recorded prompt comparisons remain comparable.
+task IDs in `frontend/src/scene/replayPresentation.ts`, plus its dish in
+`frontend/src/data/menuPresentation.ts`. Fig prep uses `slice_figs`, `prepare_basil`
+and `prepare_fig_sauce`; it follows the same pot-then-pan resource release pattern.
+Priority-rule evolution
+uses lemon-only synthetic cases. Historical prompt
+comparison records are retained in `evaluation/results/`.
 
-## Decisions and observations
+## Scheduling and customer conversation
 
-The agent controller requests decisions while startable tasks or service actions exist, and advances pending events without a model call when neither exists. Dynamic arrivals are implemented in the separate priority scheduler; live disruptions require an extension. Avoid unnecessary model calls while no meaningful action is possible.
+`simulation/scheduler.py:Dispatcher` scores valid ready tasks, recomputes after
+each start, serves finished dishes and respects equipment ownership. Cooking
+rules belong in `Kitchen`; do not duplicate them in the renderer or host prompts.
+Default priority is earliest deadline, then least remaining work.
 
-Supply the recipe, objective, resource rules, and tool contracts. Supply updated observations containing:
+`runtime/sessions.py` maps real time to simulated time for live service.
+`agents/team.py` handles default conversation through OpenAI SDK waiters and a manager.
+Waiters use `KitchenAdvisorAgent.as_tool()` for bounded preference/ingredient/wait-time
+questions. The child is read-only; it does not take over the customer conversation.
+Clear orders skip it. Estimate tools rehearse on copies of LiveKitchen, never the real queue.
+Order-progress questions also use the advisor. The seated game presents consultation as
+a table → kitchen pass → table visit; the reply waits in the client until the waiter
+returns. `frontend/src/game/consultation.ts` owns these presentation stages.
+`messages/progress` reports actual child-call start/completion/failure while the model
+works; keep it separate from simulator replay events. Tips are a subtle rotating bar,
+not preset request buttons; preserve free customer input.
+`agents/host.py` retains shared order validation and the legacy ADK conversation policy.
+`agents/models.py` and `agents/retrying_llm.py` serve the legacy provider path.
+Keep authoritative kitchen/dining state outside model histories and isolated per session.
+See `docs/restaurant-team.md`; do not restore LLM-driven cooking.
 
-- Current simulated time and active orders with deadlines.
-- Resource ownership, including chef availability.
-- Running tasks and remaining times.
-- Completed tasks grouped by order.
-- Available tasks grouped by order, initially provided as assistance.
-- Recent events and the last action result.
-
-The agent chooses the next action or waits. Simulator validation still applies even when available actions are supplied. Keep the decision loop bounded by action/model-call and simulated-time limits.
-
-## ADK integration
-
-The current runtime uses ONE ChefAgent, which directs every chef in the kitchen. Different menus are recipe data, not separate agents.
-
-Implemented tools: `get_recipe`, `get_kitchen_state`, `start_task`, `advance_to_next_event`, `serve_order`. Tool wrappers call the simulator and return structured results with fresh observations. Do not duplicate cooking rules in prompts or callbacks.
-
-The controller and ADK Runner must have clear ownership: ADK can make multiple model/tool calls in one invocation, so do not assume a Runner invocation equals one kitchen action. Implement an explicit boundary if one-decision-per-cycle behavior is desired.
-
-Keep authoritative kitchen state outside ADK session state. Session state may hold plans or preferences. State values are not automatically visible to the LLM; expose observations through model input or tool results. Keep kitchens isolated by run/session rather than using a single global kitchen in a multi-user server.
-
-Callbacks can enforce additional policies and log events. They do not replace simulator rules, and root-agent callbacks do not automatically protect every future sub-agent.
+Do not restore a model-driven cooking loop or its old comparison/progress plumbing
+as part of unrelated changes. Offline rule generation is distinct from service.
 
 ## Order intake
 
@@ -316,7 +315,7 @@ live commands. Do not run paid live experiments as routine offline verification.
 Character movement remains visual presentation. Movement costs and spatial
 planning require an explicit simulator extension. Evaluation measures changes;
 it does not automatically train the live model. Priority-rule evolution selects
-arithmetic dispatch rules separately from live agent planning.
+arithmetic dispatch rules separately from live dispatch.
 
 ## References
 

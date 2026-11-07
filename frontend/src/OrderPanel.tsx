@@ -47,14 +47,13 @@ export function OrderPanel({ busy, chefs, onChefsChange, onCook }: {
           value={Number.isNaN(item.time_limit) ? '' : item.time_limit} onChange={(event) => setCart((items) => items.map((v, i) => i === index ? { ...v, time_limit: event.target.valueAsNumber } : v))} /></label></details>
       </div>)}
       <label>실행 모드<select value={policy} disabled={busy} onChange={(event) => setPolicy(event.target.value)}>
-        <option value="scripted">Scripted baseline</option><option value="priority">Priority · earliest deadline</option><option value="agent">LLM chef · comparison</option>
+        <option value="scripted">Scripted baseline</option><option value="priority">Priority · earliest deadline</option>
       </select></label>
       <label>셰프 수<input type="number" min="1" max="4" step="1" required disabled={busy}
         value={Number.isNaN(chefs) ? '' : chefs} onChange={(event) => onChefsChange(event.target.valueAsNumber)} /></label>
       <label>전체 실행 제한 시간 (simulated seconds)<input type="number" min="1" max="86400" step="1" required disabled={busy}
         value={Number.isNaN(maxSimulatedTime) ? '' : maxSimulatedTime}
         onChange={(event) => setMaxSimulatedTime(event.target.valueAsNumber)} /></label>
-      {policy === 'agent' && <p className="muted">서버의 모델과 인증 정보를 사용하며 제공자 요금이 발생할 수 있습니다.</p>}
       <button className="primary" disabled={busy || !cart.length}>{busy ? '주문 처리 중…' : '조리 시작'}</button>
     </form>
   </>;

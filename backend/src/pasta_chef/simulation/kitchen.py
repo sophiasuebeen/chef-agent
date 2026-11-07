@@ -20,6 +20,12 @@ def free_chef(state: KitchenState) -> str | None:
 CUSTOMER_CHAT = ("customer", "chat")
 
 
+def resource_kind(name: str) -> str:
+    """Recipes name a resource pool; running tasks name a concrete unit."""
+    base, _, suffix = name.rpartition("_")
+    return base if suffix.isdigit() else name
+
+
 def _held_for(state: KitchenState, order_id: str, task_id: str) -> set[str]:
     """Equipment this order kept from an earlier step, waiting for this task."""
     owned = {resource: owner[1] for resource, owner in state.resources.items()
@@ -30,7 +36,7 @@ def _held_for(state: KitchenState, order_id: str, task_id: str) -> set[str]:
     held = set()
     for resource, owner_task in owned.items():
         hold = get_task(recipe, owner_task).get("holds")
-        if hold and hold["until"] == task_id and resource in hold["resources"]:
+        if hold and hold["until"] == task_id and resource_kind(resource) in hold["resources"]:
             held.add(resource)
     return held
 
@@ -53,22 +59,33 @@ def validate_task(state: KitchenState, order_id: str, task_id: str) -> dict:
     if type(duration) is not int or duration <= 0:
         raise ValueError("Task duration must be a positive integer.")
     held = _held_for(state, order_id, task_id)
-    for resource in task["resources"]:
-        if resource == "chef":  # In a recipe, "chef" means any one free chef.
-            if free_chef(state) is None:
-                raise ValueError("Resource unavailable: chef")
-            continue
-        if resource not in state.resources:
-            raise ValueError(f"Unknown resource: {resource}")
-        if state.resources[resource] is not None and resource not in held:
-            raise ValueError(f"Resource unavailable: {resource}")
+    _assign_resources(state, task, held)
     return task
 
 
+def _assign_resources(state: KitchenState, task: dict, held: set[str]) -> list[str]:
+    assigned = []
+    for resource in task["resources"]:
+        candidates = chef_names(state) if resource == "chef" else [
+            name for name in state.resources if resource_kind(name) == resource]
+        if not candidates:
+            raise ValueError(f"Unknown resource: {resource}")
+        selected = next((name for name in candidates if name in held), None)
+        selected = selected or next((name for name in candidates if state.resources[name] is None and name not in assigned), None)
+        if selected is None:
+            raise ValueError(f"Resource unavailable: {resource}")
+        assigned.append(selected)
+    return assigned
+
+
 class Kitchen:
-    def __init__(self, *, duration_sampler=None, chefs=1):
+    def __init__(self, *, duration_sampler=None, chefs=1, equipment=None):
         if type(chefs) is not int or not 1 <= chefs <= MAX_CHEFS:
             raise ValueError(f"Chefs must be an integer from 1 to {MAX_CHEFS}.")
+        self.equipment = {"burner": 1, "pot": 1, "pan": 1} if equipment is None else dict(equipment)
+        if set(self.equipment) != {"burner", "pot", "pan"} or any(
+                type(count) is not int or not 1 <= count <= 6 for count in self.equipment.values()):
+            raise ValueError("Equipment must specify burner, pot and pan counts from 1 to 6.")
         self.chefs = chefs
         self.reset()
         # Optional simulation-only uncertainty; planned recipe data stays intact.
@@ -76,7 +93,9 @@ class Kitchen:
 
     def reset(self) -> None:
         extra = [f"chef_{number}" for number in range(2, self.chefs + 1)]
-        self.state = KitchenState(resources=dict.fromkeys(("chef", *extra, "burner", "pot", "pan")))
+        equipment = [kind if number == 1 else f"{kind}_{number}"
+                     for kind, count in self.equipment.items() for number in range(1, count + 1)]
+        self.state = KitchenState(resources=dict.fromkeys(("chef", *extra, *equipment)))
 
     def _record(self, result: dict) -> dict:
         self.state.events.append(dict(deepcopy(result), sequence=len(self.state.events) + 1))
@@ -116,7 +135,7 @@ class Kitchen:
             raise ValueError("Sampled duration must be a positive integer.")
         chef = free_chef(self.state) if "chef" in task["resources"] else None
         running = RunningTask(order_id, task_id, self.state.time + duration,
-                              [chef if r == "chef" else r for r in task["resources"]])
+                              _assign_resources(self.state, task, _held_for(self.state, order_id, task_id)))
         # A held resource this step does not use (the burner once draining starts) is now free.
         for resource in _held_for(self.state, order_id, task_id):
             self.state.resources[resource] = None
@@ -126,6 +145,8 @@ class Kitchen:
         self.state.orders[order_id].status = "cooking"
         result = dict(ok=True, action="task_started", time=self.state.time,
                       order_id=order_id, task_id=task_id, finishes_at=running.finishes_at)
+        if any(count > 1 for count in self.equipment.values()):
+            result["resources"] = list(running.resources)
         if chef is not None and self.chefs > 1:
             result["chef"] = chef
         return self._record(result)
@@ -150,7 +171,7 @@ class Kitchen:
             hold = get_task(load_recipe(order.menu), task.task_id).get("holds")
             kept = hold["resources"] if hold else ()
             for resource in task.resources:
-                if self.state.resources[resource] == (task.order_id, task.task_id) and resource not in kept:
+                if self.state.resources[resource] == (task.order_id, task.task_id) and resource_kind(resource) not in kept:
                     self.state.resources[resource] = None
         self.state.running_tasks = [t for t in self.state.running_tasks if t not in finished]
         return self._record(dict(ok=True, action="tasks_completed", time=self.state.time,

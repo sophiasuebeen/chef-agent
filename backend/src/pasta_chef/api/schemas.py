@@ -67,7 +67,7 @@ class StateResponse(BaseModel):
 
 class ExecuteRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    policy: Literal["scripted", "priority", "agent"] = "scripted"
+    policy: Literal["scripted", "priority"] = "scripted"
     max_actions: Annotated[StrictInt, Field(gt=0, le=10000)] = 1000
     max_simulated_time: Annotated[StrictInt, Field(gt=0, le=86400)] = 1800
 
@@ -90,11 +90,10 @@ class ReplayEvent(BaseModel):
 
 
 class SchedulingPolicy(BaseModel):
-    name: Literal["scripted", "priority", "agent"]
+    name: Literal["scripted", "priority"]
     version: str
     rule: dict[str, str] | None = None
     model: str | None = None
-    prompt_variant: str | None = None
 
 
 class FinalOrder(OrderResponse):
