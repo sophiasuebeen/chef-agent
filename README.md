@@ -53,9 +53,37 @@ flowchart TD
 
 ## Core Design Choices
 
-### Stateful waiters & read-only kitchen advice
+### Tools define authority
 
-Waiters retain table-scoped conversation history and place orders through validated tools. For recommendations or progress questions, they consult `KitchenAdvisorAgent`, which reads menu and order data and estimates waits on copies of the live kitchen. The waiter keeps the conversation; cooking continues independently.
+Each role gets only the tools its job requires, so limits hold regardless of model output.
+
+| Actor | Type | Owns | Cannot |
+| --- | --- | --- | --- |
+| `WaiterAgent` A/B | LLM | Table conversation, orders | Reassign staff, control cooking |
+| `ManagerAgent` | LLM | Complaints, waiter reassignment | Control cooking |
+| `KitchenAdvisorAgent` | LLM | Menu facts, order status, wait estimates | Talk to customers, place orders, change state |
+| `RestaurantRuntime` | Code | Seating, routine assignment, delivery | — |
+| `LiveKitchen` + `Dispatcher` | Code | Scheduling, recipe rules, equipment | — |
+
+### Two delegation patterns
+
+- **Handoff when responsibility changes:** complaints transfer the conversation to `ManagerAgent`.
+- **Agent-as-tool when the waiter needs an answer:** `ask_kitchen` returns findings, and the waiter stays with the customer.
+
+Greetings use fixed text, and clear orders skip the advisor.
+
+### Models interpret; code decides
+
+An order exists only after `place_order` passes simulator validation. Cooking and delivery make no LLM calls.
+
+### Bounded context and failure
+
+- **Isolation:** each table has its own history and order scope.
+- **Limits:** each customer turn gets 6 SDK turns, 30 seconds, and one 4-turn advisor run.
+- **Failure:** if the advisor fails, the waiter is told not to claim a confirmed answer, and accepted orders remain.
+
+Tested offline with the real Agents SDK `Runner` and a scripted model.
+
 ### Resource-constrained cooking
 
 Recipes are directed acyclic graphs of tasks. The simulator enforces dependencies and exclusive equipment ownership; the `Dispatcher` ranks feasible tasks with:
@@ -65,11 +93,6 @@ score = -deadline - 0.001 × remaining_work + 0.00001 × background
 ```
 
 Higher scores run first, favoring earlier deadlines and less remaining work. Duration estimates adapt through an exponential moving average (EMA) of completed tasks' timing deviations. See [scheduling details](docs/priority-scheduling.md).
-
-### Ownership
-
-`RestaurantRuntime` owns seating, staff assignments, and delivery. Complaints trigger a handoff to `ManagerAgent`, which inspects service state and can reassign a waiter through validated tools. Agents interpret intent; runtime code enforces every state change.
-
 
 ## Tech Stack
 
