@@ -43,6 +43,15 @@ def _held_for(state: KitchenState, order_id: str, task_id: str) -> set[str]:
 
 def validate_task(state: KitchenState, order_id: str, task_id: str) -> dict:
     """Shared read-only validation used by actions and observations."""
+    return _validate_task(state, order_id, task_id)[0]
+
+
+def _validate_task(state: KitchenState, order_id: str, task_id: str) -> tuple[dict, set[str]]:
+    """Validate, returning the task and the equipment this order holds for it.
+
+    The held set reflects ownership before this task starts, so start_task reuses it
+    rather than recomputing (and reloading the recipe) after validation.
+    """
     if order_id not in state.orders:
         raise KeyError(f"Unknown order: {order_id}")
     order = state.orders[order_id]
@@ -60,7 +69,7 @@ def validate_task(state: KitchenState, order_id: str, task_id: str) -> dict:
         raise ValueError("Task duration must be a positive integer.")
     held = _held_for(state, order_id, task_id)
     _assign_resources(state, task, held)
-    return task
+    return task, held
 
 
 def _assign_resources(state: KitchenState, task: dict, held: set[str]) -> list[str]:
@@ -133,16 +142,16 @@ class Kitchen:
         return validate_task(self.state, order_id, task_id)
 
     def start_task(self, order_id: str, task_id: str) -> dict:
-        task = self.validate_task(order_id, task_id)
+        task, held = _validate_task(self.state, order_id, task_id)
         duration = task["duration"] if self.duration_sampler is None else self.duration_sampler(
             deepcopy(self.state.orders[order_id]), deepcopy(task))
         if type(duration) is not int or duration <= 0:
             raise ValueError("Sampled duration must be a positive integer.")
         chef = free_chef(self.state) if "chef" in task["resources"] else None
         running = RunningTask(order_id, task_id, self.state.time + duration,
-                              _assign_resources(self.state, task, _held_for(self.state, order_id, task_id)))
+                              _assign_resources(self.state, task, held))
         # A held resource this step does not use (the burner once draining starts) is now free.
-        for resource in _held_for(self.state, order_id, task_id):
+        for resource in held:
             self.state.resources[resource] = None
         for resource in running.resources:
             self.state.resources[resource] = (order_id, task_id)

@@ -1,4 +1,4 @@
-"""Pure dispatch rules and event-driven scheduling; no ADK/provider imports."""
+"""Pure dispatch rules and event-driven scheduling; no agent SDK or provider imports."""
 import ast
 from copy import deepcopy
 from dataclasses import dataclass, field
