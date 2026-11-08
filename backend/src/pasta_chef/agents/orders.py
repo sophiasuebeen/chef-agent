@@ -5,9 +5,8 @@ change cooking any other way. What actually happened is reported as `actions`, b
 code, and never inferred from the model's reply.
 """
 from pasta_chef.agents.host import available_menus
+from pasta_chef.simulation.kitchen import DEFAULT_TIME_LIMIT, MAX_QUANTITY
 
-MAX_QUANTITY = 20
-DEFAULT_TIME_LIMIT = 900
 ACCEPTED_REMINDER = ("Tell the customer the wait in minutes. If they also asked for anything you "
                      "did not order, say by name that you cannot make it.")
 

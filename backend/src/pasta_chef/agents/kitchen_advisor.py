@@ -1,7 +1,7 @@
 """Read-only kitchen specialist, called by waiters as an SDK agent tool."""
 from copy import deepcopy
 
-from pasta_chef.agents.orders import DEFAULT_TIME_LIMIT
+from pasta_chef.simulation.kitchen import DEFAULT_TIME_LIMIT
 from pasta_chef.runtime.sessions import rehearse_until
 
 

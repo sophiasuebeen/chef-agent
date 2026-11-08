@@ -3,8 +3,7 @@ from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, StrictInt, StrictStr, field_validator
 
-from pasta_chef.agents.orders import MAX_QUANTITY
-from pasta_chef.simulation.kitchen import MAX_CHEFS
+from pasta_chef.simulation.kitchen import MAX_CHEFS, MAX_QUANTITY
 
 
 # Largest integer JavaScript clients can represent exactly. A transport limit, not a cooking rule.

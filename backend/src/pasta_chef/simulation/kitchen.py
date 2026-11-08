@@ -4,6 +4,9 @@ from .models import KitchenState, Order, RunningTask
 from .recipes import get_task, load_recipe
 
 MAX_CHEFS = 4
+# Order intake rules shared by the HTTP API and the staff tools; both import them from here.
+MAX_QUANTITY = 20  # Plates per order request.
+DEFAULT_TIME_LIMIT = 900  # Simulated seconds from acceptance to deadline.
 
 
 def chef_names(state: KitchenState) -> list[str]:
@@ -116,7 +119,7 @@ class Kitchen:
         self.state.last_action_result = deepcopy(result)
         return result
 
-    def add_order(self, menu: str, time_limit: int = 900) -> Order:
+    def add_order(self, menu: str, time_limit: int = DEFAULT_TIME_LIMIT) -> Order:
         if not isinstance(menu, str):
             raise ValueError("Menu must be a string.")
         menu = menu.strip().lower()
