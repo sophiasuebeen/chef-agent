@@ -17,3 +17,10 @@ api = [
     "uvicorn>=0.54,<1",
     "httpx>=0.28,<1", # Required by FastAPI's TestClient in backend/tests.
 ]
+
+[dependency-groups]
+# Development checks only; not needed to run the simulator, API or game.
+dev = [
+    "ruff>=0.8,<1",
+    "import-linter>=2,<3",
+]

@@ -57,9 +57,14 @@ Simulator imports and scripted/priority execution do not require an agent SDK,
 an API server, or a renderer. `backend/pyproject.toml` has no required dependencies.
 The `agent` extra provides the OpenAI Agents SDK, python-dotenv and the Google GenAI
 SDK (only for optional Gemini rule evolution in `evaluation/evolve.py`). The `api`
-extra provides FastAPI, Uvicorn and HTTPX. Google ADK and LiteLLM were removed with
-the legacy single-host conversation. Do not change dependencies as part of a
-documentation-only task.
+extra provides FastAPI, Uvicorn and HTTPX. The `dev` dependency group (installed by
+default with `uv sync`) provides ruff and import-linter for checks only. Google ADK and
+LiteLLM were removed with the legacy single-host conversation. Do not change
+dependencies as part of a documentation-only task.
+
+Layers import downward only: `api` > `agents` > `runtime` > `simulation`.
+`simulation` imports no config, credentials or SDKs. `.importlinter` enforces this;
+when a value is needed by two layers, move it to the lower one instead of importing up.
 
 Paths below are relative to the repository root:
 
@@ -289,8 +294,13 @@ For all offline suites, use the backend environment with both extras installed:
 
 ```bash
 uv sync --project backend --extra agent --extra api --locked
+backend/.venv/bin/ruff check .
+PYTHONPATH=backend/src backend/.venv/bin/lint-imports
 backend/.venv/bin/python scripts/run_tests.py
 ```
+
+`.github/workflows/ci.yml` runs these, the scripted baseline, and the frontend
+test and build on every pull request and push to `main`.
 
 For focused unittest discovery:
 

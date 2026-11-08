@@ -1,0 +1,8 @@
+# Lint rules for every Python file in the repository (backend, tests, scripts, evaluation).
+# Start small: real bugs only (pyflakes F: unused imports, undefined names; E9: syntax errors).
+# Add rule families later, one PR at a time, fixing what they find in the same PR.
+target-version = "py312"
+extend-exclude = ["frontend", "evaluation/results"]
+
+[lint]
+select = ["F", "E9"]
