@@ -1,4 +1,5 @@
 """Reusable scripted baseline, with an optional bounded multi-order episode."""
+from .kitchen import is_complete
 from .recipes import load_recipe
 
 
@@ -18,7 +19,7 @@ def scripted_actions(kitchen, order_id):
     """Yield one action at a time; each choice reads the kitchen as it now stands."""
     order = kitchen.get_order(order_id)
     recipe = load_recipe(order.menu)
-    while not set(recipe["completion_tasks"]).issubset(order.completed_tasks):
+    while not is_complete(order, recipe):
         task_id = _next_task(kitchen, order_id, recipe)
         if task_id is not None:
             yield "start_task", (order_id, task_id)

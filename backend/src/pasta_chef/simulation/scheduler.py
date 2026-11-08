@@ -5,6 +5,7 @@ from dataclasses import dataclass, field
 import math
 import operator
 
+from .kitchen import is_complete
 from .recipes import load_recipe
 
 FEATURES = ('now', 'due', 'pt', 'wkr', 'steps', 'slack', 'queue', 'ema_dev', 'background')
@@ -149,7 +150,7 @@ class Dispatcher:
 
     def serve_one(self):
         for order in self.kitchen.state.orders.values():
-            if order.status != 'served' and set(load_recipe(order.menu)['completion_tasks']).issubset(order.completed_tasks):
+            if order.status != 'served' and is_complete(order, load_recipe(order.menu)):
                 self.kitchen.serve_order(order.id)
                 return True
         return False

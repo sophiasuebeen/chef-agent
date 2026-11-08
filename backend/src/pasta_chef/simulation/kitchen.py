@@ -78,6 +78,11 @@ def _assign_resources(state: KitchenState, task: dict, held: set[str]) -> list[s
     return assigned
 
 
+def is_complete(order: Order, recipe: dict) -> bool:
+    """True when every completion task of the recipe is done for this order. Serving is separate."""
+    return set(recipe["completion_tasks"]).issubset(order.completed_tasks)
+
+
 class Kitchen:
     def __init__(self, *, duration_sampler=None, chefs=1, equipment=None):
         if type(chefs) is not int or not 1 <= chefs <= MAX_CHEFS:
@@ -183,7 +188,7 @@ class Kitchen:
         if order.status == "served":
             raise ValueError("Order has already been served.")
         recipe = load_recipe(order.menu)
-        if not set(recipe["completion_tasks"]).issubset(order.completed_tasks):
+        if not is_complete(order, recipe):
             raise ValueError("Order is incomplete.")
         if any(t.order_id == order_id for t in self.state.running_tasks):
             raise ValueError("Order still has running tasks.")
