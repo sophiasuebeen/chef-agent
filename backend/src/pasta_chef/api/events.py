@@ -3,6 +3,7 @@ from copy import deepcopy
 from dataclasses import asdict
 
 from pasta_chef.api.schemas import ExecuteRequest, ReplayResponse
+from pasta_chef.simulation.observation import serialize_resources, serialize_running_tasks
 from pasta_chef.simulation.recipes import load_recipe
 from pasta_chef.simulation.scheduler import PriorityRule, run_priority_episode
 from pasta_chef.simulation.scripted import run_scripted_episode
@@ -10,10 +11,8 @@ from pasta_chef.simulation.scripted import run_scripted_episode
 
 def replay_state(state):
     return dict(time=state.time, orders=[asdict(o) for o in state.orders.values()],
-                resources={name: list(owner) if owner else None
-                           for name, owner in state.resources.items()},
-                running_tasks=[dict(asdict(t), remaining_time=t.finishes_at - state.time)
-                               for t in state.running_tasks])
+                resources=serialize_resources(state),
+                running_tasks=serialize_running_tasks(state, state.time))
 
 
 def execute(kitchen, run_id: str, initial_conditions: dict, body: ExecuteRequest) -> ReplayResponse:
