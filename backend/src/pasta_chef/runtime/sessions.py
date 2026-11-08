@@ -13,6 +13,7 @@ import time
 from uuid import uuid4
 
 from pasta_chef.simulation.kitchen import Kitchen, chef_names, free_chef
+from pasta_chef.simulation.observation import serialize_resources, serialize_running_tasks
 from pasta_chef.simulation.recipes import load_recipe
 from pasta_chef.simulation.scheduler import Dispatcher
 
@@ -219,9 +220,8 @@ class LiveSession:
             idle=not state.running_tasks,
             chef_hold=self.live.chef_hold,
             orders=[asdict(order) for order in state.orders.values()],
-            resources={name: list(owner) if owner else None for name, owner in state.resources.items()},
-            running_tasks=[dict(asdict(task), remaining_time=task.finishes_at - now)
-                           for task in state.running_tasks],
+            resources=serialize_resources(state),
+            running_tasks=serialize_running_tasks(state, now),
         )
 
     def events_after(self, cursor):

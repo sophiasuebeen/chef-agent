@@ -6,6 +6,16 @@ from .models import KitchenState
 from .recipes import load_recipe
 
 
+def serialize_resources(state: KitchenState) -> dict:
+    """Resource name -> owner as a JSON list, or None when free."""
+    return {name: list(owner) if owner else None for name, owner in state.resources.items()}
+
+
+def serialize_running_tasks(state: KitchenState, now: int) -> list[dict]:
+    """Detached running tasks, each with remaining_time measured from now."""
+    return [dict(asdict(task), remaining_time=task.finishes_at - now) for task in state.running_tasks]
+
+
 def build_observation(state: KitchenState) -> dict:
     """Return a detached JSON snapshot, using the simulator's validation rules."""
     available = {}
@@ -22,10 +32,9 @@ def build_observation(state: KitchenState) -> dict:
     return deepcopy({
         "time": state.time,
         "orders": [asdict(o) for o in state.orders.values() if o.status != "served"],
-        "resources": {r: list(owner) if owner else None for r, owner in state.resources.items()},
+        "resources": serialize_resources(state),
         "chef_available": free_chef(state) is not None,
-        "running_tasks": [dict(asdict(t), remaining_time=t.finishes_at - state.time)
-                          for t in state.running_tasks],
+        "running_tasks": serialize_running_tasks(state, state.time),
         "completed_tasks": {o.id: list(o.completed_tasks) for o in state.orders.values()},
         "available_tasks": available,
         "recent_events": state.events[-20:],

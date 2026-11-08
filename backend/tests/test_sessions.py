@@ -12,7 +12,9 @@ from fastapi.testclient import TestClient
 from pasta_chef.main import create_app
 from pasta_chef.runtime.sessions import LiveKitchen, LiveSession, SessionStore, event_stream
 from pasta_chef.simulation.kitchen import Kitchen
-from pasta_chef.simulation.observation import build_observation
+from pasta_chef.api.events import replay_state
+from pasta_chef.simulation.observation import (
+    build_observation, serialize_resources, serialize_running_tasks)
 from pasta_chef.simulation.scheduler import run_priority_episode
 
 
@@ -351,6 +353,17 @@ class LiveSessionTests(unittest.TestCase):
         state = self.session.snapshot()
         self.assertTrue(state["idle"])
         self.assertEqual(state["orders"][0]["served_at"], 710)
+
+    def test_snapshot_replay_and_observation_share_serialization(self):
+        self.session.add_orders([("lemon_pasta", 900), ("lemon_pasta", 900)])
+        self.clock.now += 5
+        snapshot = self.session.snapshot()
+        state = self.session.live.kitchen.state
+        self.assertEqual(snapshot["resources"], serialize_resources(state))
+        self.assertEqual(snapshot["running_tasks"], serialize_running_tasks(state, snapshot["time"]))
+        for view in (replay_state(state), build_observation(state)):
+            self.assertEqual(view["resources"], serialize_resources(state))
+            self.assertEqual(view["running_tasks"], serialize_running_tasks(state, state.time))
 
     def test_events_after_resume_from_a_position(self):
         self.session.add_orders([("lemon_pasta", 900)])

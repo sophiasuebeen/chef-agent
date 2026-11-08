@@ -6,7 +6,8 @@ import unittest
 from unittest.mock import patch
 
 from pasta_chef.simulation.kitchen import Kitchen
-from pasta_chef.simulation.observation import build_observation
+from pasta_chef.simulation.observation import (
+    build_observation, serialize_resources, serialize_running_tasks)
 from pasta_chef.simulation.recipes import load_recipe
 from pasta_chef.simulation.scheduler import run_priority_episode
 from pasta_chef.simulation.scripted import run_scripted
@@ -107,6 +108,23 @@ class ScriptedWorkflowTests(unittest.TestCase):
         snapshot["orders"][0]["completed_tasks"].append("fake")
         snapshot["resources"]["chef"][0] = "fake"
         snapshot["recent_events"][0]["menu"] = "fake"
+        self.assertEqual(before, self.kitchen.state)
+
+    def test_serialization_helpers_are_detached_and_measure_from_now(self):
+        self.kitchen.start_task(self.order.id, "collect_ingredients")
+        before = deepcopy(self.kitchen.state)
+        resources = serialize_resources(self.kitchen.state)
+        self.assertEqual(list(resources), list(self.kitchen.state.resources))
+        self.assertEqual(resources["chef"], [self.order.id, "collect_ingredients"])
+        self.assertIsNone(resources["pot"])
+        running = serialize_running_tasks(self.kitchen.state, 5)
+        self.assertEqual(running, [dict(order_id=self.order.id, task_id="collect_ingredients",
+                                         finishes_at=20, resources=["chef"], remaining_time=15)])
+        self.assertEqual(list(running[0]), ["order_id", "task_id", "finishes_at", "resources",
+                                            "remaining_time"])
+        json.dumps([resources, running])
+        resources["chef"][0] = "fake"
+        running[0]["resources"].append("fake")
         self.assertEqual(before, self.kitchen.state)
 
     def test_late_service_and_reset(self):
