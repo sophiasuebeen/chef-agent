@@ -1,0 +1,25 @@
+# Layer rules: a module may import from layers BELOW it, never above.
+# Run from the repository root:  PYTHONPATH=backend/src backend/.venv/bin/lint-imports
+[importlinter]
+root_package = pasta_chef
+include_external_packages = True
+
+[importlinter:contract:layers]
+name = API > agents > runtime > simulation
+type = layers
+layers =
+    pasta_chef.api
+    pasta_chef.agents
+    pasta_chef.runtime
+    pasta_chef.simulation
+
+[importlinter:contract:simulation-is-standalone]
+name = Simulation needs no config, credentials or SDK wiring
+type = forbidden
+source_modules =
+    pasta_chef.simulation
+forbidden_modules =
+    pasta_chef.config
+    agents
+    openai
+    google
