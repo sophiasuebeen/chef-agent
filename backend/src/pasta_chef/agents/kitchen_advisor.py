@@ -10,14 +10,14 @@ class KitchenAdvisor:
         from agents import Agent, function_tool, ModelSettings
         self.team = team
         self.agent = Agent(
-            name="KitchenAdvisorAgent", model=team._model, instructions=self._instruction,
+            name="KitchenAdvisorAgent", model=team.model, instructions=self._instruction,
             model_settings=ModelSettings(parallel_tool_calls=False),
             tools=[function_tool(self.get_menu_details), function_tool(self.get_kitchen_estimates),
                    function_tool(team.get_order_status)],
         )
 
     def _instruction(self, context, agent):
-        language = {"ko": "Korean", "en": "English"}.get(self.team._language)
+        language = {"ko": "Korean", "en": "English"}.get(self.team.language)
         return (
             "You are KitchenAdvisorAgent, the restaurant's read-only kitchen specialist. "
             "A waiter asks you a bounded question; return findings to the waiter, who remains "

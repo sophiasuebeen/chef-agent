@@ -36,6 +36,28 @@ class ConfigurationTests(unittest.TestCase):
         with patch.dict(os.environ, {}, clear=True), self.assertRaises(ConfigurationError):
             require_model_credentials("openai/gpt-4o")
 
+    def test_staff_model_name_keeps_openai_names_and_falls_back_otherwise(self):
+        from pasta_chef.agents.team import STAFF_FALLBACK_MODEL, staff_model_name
+        self.assertEqual(STAFF_FALLBACK_MODEL, "gpt-4o")
+        self.assertEqual(staff_model_name("openai/gpt-4o-mini"), "gpt-4o-mini")
+        self.assertEqual(staff_model_name("gpt-4.1"), "gpt-4.1")
+        self.assertEqual(staff_model_name("o3-mini"), "o3-mini")
+        self.assertEqual(staff_model_name(Settings().model), "gpt-4o")
+        self.assertEqual(staff_model_name("openai/gemini-2.5-flash"), "gpt-4o")
+
+    def test_create_team_model_precedence_is_unchanged(self):
+        from pasta_chef.agents import team
+        cases = [({"RESTAURANT_MODEL": "gpt-4.1", "CHEF_HOST_MODEL": "gpt-4o-mini", "CHEF_MODEL": "o3"}, "gpt-4.1"),
+                 ({"CHEF_HOST_MODEL": "openai/gpt-4o-mini", "CHEF_MODEL": "o3"}, "gpt-4o-mini"),
+                 ({"CHEF_MODEL": "o3"}, "o3"),
+                 ({}, "gpt-4o")]
+        for env, expected in cases:
+            with self.subTest(env=env), patch.dict(os.environ, {**env, "OPENAI_API_KEY": "x"}, clear=True), \
+                    patch("pasta_chef.config.Settings.from_env",
+                          lambda: Settings(model=os.getenv("CHEF_MODEL", "gemini-2.5-flash"))), \
+                    patch.object(team, "RestaurantTeam", lambda session, model: model):
+                self.assertEqual(team.create_team(None), expected)
+
 
 if __name__ == "__main__":
     unittest.main()

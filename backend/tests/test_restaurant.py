@@ -196,6 +196,24 @@ class RestaurantTeamTests(unittest.IsolatedAsyncioTestCase):
         self.now = 200
         self.assertEqual(self.team.get_order_status()["orders"][0]["status"], "ready_at_pass")
 
+    def test_dining_status_prefers_delivery_then_pass_then_kitchen(self):
+        self.session.restaurant.delivered["order_9"] = dict(table_id="table.hall.1")
+        status = self.team._dining_status
+        self.assertEqual(status(dict(id="order_9", status="served")), "delivered")
+        self.assertEqual(status(dict(id="order_1", status="served")), "ready_at_pass")
+        self.assertEqual(status(dict(id="order_1", status="cooking")), "cooking")
+        self.assertEqual(status(dict(id="order_1", status="pending")), "pending")
+
+    async def test_advisor_reads_team_model_and_language_through_public_accessors(self):
+        self.assertIs(self.team.model, self.model)
+        self.assertIsNone(self.team.language)
+        self.team._ensure_agent()
+        self.assertIs(self.team.kitchen_advisor.agent.model, self.model)
+        self.model.script = ["안녕하세요"]
+        await self.team.reply("안녕하세요", language="en")
+        self.assertEqual(self.team.language, "en")
+        self.assertIn("English", self.team.kitchen_advisor._instruction(None, None))
+
     async def test_waiter_calls_real_sdk_subagent_then_answers_customer_itself(self):
         self.model.script = [
             [("ask_kitchen", {"input": "해산물 없이 달콤한 파스타와 대기 시간을 확인해 주세요"})],

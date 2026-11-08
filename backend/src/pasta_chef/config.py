@@ -6,6 +6,8 @@ from pathlib import Path
 
 @dataclass(frozen=True)
 class Settings:
+    # CHEF_MODEL: shared default for Gemini tooling. The OpenAI staff team prefers
+    # RESTAURANT_MODEL / CHEF_HOST_MODEL and replaces non-OpenAI names (see agents.team).
     model: str = "gemini-2.5-flash"
 
     def __post_init__(self):
