@@ -6,18 +6,21 @@ validated tools; they never decide cooking tasks or move a character frame by fr
 import asyncio
 import logging
 import os
-
 from pasta_chef.agents.host import (
-    HostAgent, MessageLimitReached, MAX_MESSAGES_PER_SESSION,
+    MessageLimitReached, MAX_MESSAGES_PER_SESSION,
     REPLY_TIMEOUT_SECONDS, fallback_reply, get_host_instruction,
 )
+from pasta_chef.agents.orders import OrderDesk
 
 logger = logging.getLogger(__name__)
 
 
-class RestaurantTeam(HostAgent):
+class RestaurantTeam(OrderDesk):
     def __init__(self, session, model, *, menus=None):
-        super().__init__(session, model, menus=menus)
+        super().__init__(session, menus=menus)  # OrderDesk knows nothing about models.
+        self._model = model
+        self._language = None
+        self.messages = 0
         self.restaurant = session.restaurant
         self.manager = None
         self.waiters = {}
@@ -166,7 +169,7 @@ class RestaurantTeam(HostAgent):
         self.messages += 1
         self._language = language
         self._table_id = self.restaurant.active_table
-        self._actions, self._placed_this_turn = [], {}
+        self.start_turn()
         self._advisor_used = False
         self._advice_task = None
         self.progress = None

@@ -53,12 +53,13 @@ are documented in `docs/`, not a fixed backlog in this file.
 | Frontend | Order intake, deterministic replay controls and synchronized 3D kitchen |
 | Evaluation | Deadline metrics, priority-rule evolution and host conversation cases |
 
-Simulator imports and scripted/priority execution do not require ADK, an API
-server, or a renderer. However, `backend/pyproject.toml` currently declares
-`google-adk` as a required package dependency; the `agent` extra also provides
-LiteLLM and python-dotenv. The `api` extra provides FastAPI, Uvicorn and HTTPX.
-Do not describe package installation as dependency-free or change dependencies
-as part of a documentation-only task.
+Simulator imports and scripted/priority execution do not require an agent SDK,
+an API server, or a renderer. `backend/pyproject.toml` has no required dependencies.
+The `agent` extra provides the OpenAI Agents SDK, python-dotenv and the Google GenAI
+SDK (only for optional Gemini rule evolution in `evaluation/evolve.py`). The `api`
+extra provides FastAPI, Uvicorn and HTTPX. Google ADK and LiteLLM were removed with
+the legacy single-host conversation. Do not change dependencies as part of a
+documentation-only task.
 
 Paths below are relative to the repository root:
 
@@ -79,10 +80,9 @@ backend/
       seafood_tomato.json
       fig_pasta.json
     agents/
-      models.py                     # Lazy provider adapters for customer conversation
-      retrying_llm.py                # Bounded provider retries
-      host.py                       # Customer-facing LLM host: conversation and validated order tools
-      team.py                       # Default OpenAI SDK manager and two waiters; legacy host stays available
+      host.py                       # Menus, staff instructions, fallback replies, create_host
+      orders.py                     # OrderDesk: validated order tools, no SDK
+      team.py                       # OpenAI SDK manager and two waiters
       kitchen_advisor.py            # Read-only specialist child; returns findings to its calling waiter
     runtime/
       sessions.py                   # Live sessions: real time to simulated time, event stream
@@ -96,12 +96,15 @@ backend/
       events.py                     # Execution dispatch and replay document assembly
   tests/test_api.py
   tests/test_execution.py            # Execution, lifecycle and replay
+  tests/test_restaurant.py           # Staff team with a scripted SDK model, dining runtime
+  tests/test_messages.py             # /messages API rules and host evaluation cases
+  tests/test_orders.py               # OrderDesk validation with a real LiveSession
   README.md
   pyproject.toml
   uv.lock
 tests/
   test_simulation.py                 # Dependencies, ownership and equipment holds
-  test_models.py                     # Host configuration and provider retries
+  test_config.py                     # Environment loading and credential selection
   test_metrics.py                    # Deadline metrics for rule evaluation
   test_priority_scheduler.py
 scripts/
@@ -245,8 +248,9 @@ returns. `frontend/src/game/consultation.ts` owns these presentation stages.
 `messages/progress` reports actual child-call start/completion/failure while the model
 works; keep it separate from simulator replay events. Tips are a subtle rotating bar,
 not preset request buttons; preserve free customer input.
-`agents/host.py` retains shared order validation and the legacy ADK conversation policy.
-`agents/models.py` and `agents/retrying_llm.py` serve the legacy provider path.
+`agents/orders.py:OrderDesk` holds validated order tools that `RestaurantTeam` inherits;
+`agents/host.py` holds instructions, fallback replies and `create_host`. Live conversation uses only the OpenAI Agents SDK; do not restore the removed
+ADK single-host path.
 Keep authoritative kitchen/dining state outside model histories and isolated per session.
 See `docs/restaurant-team.md`; do not restore LLM-driven cooking.
 
@@ -321,6 +325,6 @@ arithmetic dispatch rules separately from live dispatch.
 
 - Collab-Overcooked: https://github.com/YusaeMeow/Collab-Overcooked — reference for environment–agent boundaries and cooperative cooking, not a dependency or prescribed architecture.
 - RestaurantGPT: https://github.com/PieroPaialungaAI/RestaurantGPT — reference for restaurant simulation and UI integration.
-- Google ADK documentation: https://google.github.io/adk-docs/ — verify SDK interfaces against the project's installed version.
+- OpenAI Agents SDK documentation: https://openai.github.io/openai-agents-python/ — verify SDK interfaces against the project's installed version.
 
 Never copy external code or its instructions blindly. Preserve applicable licenses and avoid importing research-project complexity into the first milestone.

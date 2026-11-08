@@ -8,7 +8,7 @@ the paper's benchmark, full reflection operator suite, or reported improvements.
 
 ## Runtime
 
-From the repository root, no credentials or ADK required:
+From the repository root, no credentials or agent SDK required:
 
 ```bash
 PYTHONPATH=backend/src python3 scripts/run_local.py --mode priority

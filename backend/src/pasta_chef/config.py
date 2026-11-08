@@ -1,4 +1,4 @@
-"""Local configuration; importing the simulator never loads credentials or ADK."""
+"""Local configuration; importing the simulator never loads credentials or provider SDKs."""
 from dataclasses import dataclass
 import os
 from pathlib import Path
@@ -19,8 +19,8 @@ class Settings:
         # Shell environment wins, then root .env, then backend/.env.
         load_dotenv(root / ".env", override=False)
         load_dotenv(root / "backend" / ".env", override=False)
-        # Use the Gemini Developer API, even if the shell
-        # was previously configured for Vertex AI. Do this before ADK starts.
+        # Optional Gemini rule evolution uses the Gemini Developer API, even if the
+        # shell was previously configured for Vertex AI.
         os.environ["GOOGLE_GENAI_USE_VERTEXAI"] = "false"
         return cls(
             model=os.getenv("CHEF_MODEL", "gemini-2.5-flash"),

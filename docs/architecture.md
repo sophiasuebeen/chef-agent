@@ -23,8 +23,8 @@ Waiters handle ordinary conversation and validated order tools; `call_manager` i
 an SDK handoff for exceptions. `runtime/restaurant.py` owns table assignment,
 order ownership, greeting tasks, pickup and delivery. Cooking remains in Dispatcher.
 Each table has isolated conversation history and scoped order-status tools.
-`agents/host.py` retains shared menu/order validation and the legacy ADK host;
-its default factory now creates the OpenAI team. `config.py` loads local credentials.
+`agents/orders.py:OrderDesk` holds validated order tools that the team inherits;
+`agents/host.py` holds instructions and the `create_host` factory for the OpenAI team. `config.py` loads local credentials.
 See [restaurant team](restaurant-team.md) for the complete hierarchy and limits.
 
 ## Priority-rule evaluation
