@@ -62,15 +62,19 @@ def get_host_instruction(menus: dict, language: str | None = None, *, role: str 
     )
 
 
+FALLBACK_MESSAGES = {
+    "ko": dict(order_accepted="주문 받았어요. 바로 준비할게요!", unavailable=FALLBACK_REPLY),
+    "en": dict(order_accepted="Your order is confirmed. We'll start preparing it now!",
+               unavailable="Sorry, I cannot reply right now. Please try again shortly."),
+}
+
+
 def fallback_reply(actions: list[dict], language: str | None = None) -> str:
     """Tell the truth from what code recorded when the model cannot answer."""
-    if language == "en":
-        if any(action["type"] == "order_accepted" for action in actions):
-            return "Your order is confirmed. We'll start preparing it now!"
-        return "Sorry, I cannot reply right now. Please try again shortly."
-    if any(action["type"] == "order_accepted" for action in actions):
-        return "주문 받았어요. 바로 준비할게요!"
-    return FALLBACK_REPLY
+    # Only an explicit "en" switches to English; None or anything else stays Korean.
+    messages = FALLBACK_MESSAGES["en" if language == "en" else "ko"]
+    accepted = any(action["type"] == "order_accepted" for action in actions)
+    return messages["order_accepted" if accepted else "unavailable"]
 
 
 def create_host(session):

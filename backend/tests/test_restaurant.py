@@ -119,6 +119,53 @@ class RestaurantRuntimeTests(unittest.TestCase):
         self.assertEqual(len({d["seat_id"] for d in self.room.delivered.values()}), 4)
         self.assertIsNone(self.room.waiters["waiter_a"]["task"])
 
+    def test_notice_text_is_korean_only_for_ko_and_english_otherwise(self):
+        greet_ko = "어서 오세요! 메뉴를 천천히 보세요. 준비되시면 주문을 도와드릴게요."
+        greet_en = "Welcome! Take your time with the menu. I'll help when you're ready to order."
+        deliver_ko = "맛있게 드세요! 더 필요한 게 있으면 불러 주세요."
+        deliver_en = "Enjoy your meal! Call me if you need anything else."
+        cases = [((), greet_ko, deliver_ko), (("ko",), greet_ko, deliver_ko), (("en",), greet_en, deliver_en),
+                 ((None,), greet_en, deliver_en), (("fr",), greet_en, deliver_en)]
+        for args, greet_text, deliver_text in cases:
+            with self.subTest(language=args):
+                self.now = 0
+                self.session = LiveSession(speed=10, clock=lambda: self.now, chefs=2)
+                self.room = self.session.restaurant
+                self.room.seat("seat.hall.1.a")
+                greeted = self.room.arrive("waiter_a", self.room.waiters["waiter_a"]["task"]["id"], *args)
+                self.assertEqual(greeted["notice"], dict(speaker="waiter_a", text=greet_text,
+                                                         table_id="table.hall.1", kind="greet"))
+                accepted = self.session.add_orders([("lemon_pasta", 900)])
+                self.room.remember_orders("table.hall.1", [o.id for o in accepted])
+                self.now = 1000
+                self.room.sync()
+                picked = self.room.arrive("waiter_a", self.room.waiters["waiter_a"]["task"]["id"], *args)
+                self.assertIsNone(picked["notice"])
+                delivered = self.room.arrive("waiter_a", self.room.waiters["waiter_a"]["task"]["id"], *args)
+                self.assertEqual(delivered["notice"], dict(speaker="waiter_a", text=deliver_text,
+                                                           table_id="table.hall.1", kind="deliver"))
+
+    def test_pickup_order_follows_table_then_order_sequence(self):
+        self.room.seat("seat.hall.1.a")
+        self.greet()
+        self.room.seat("seat.hall.3.a")
+        self.assertTrue(self.room.reassign("table.hall.3", "waiter_a")["ok"])
+        self.room.arrive("waiter_a", self.room.waiters["waiter_a"]["task"]["id"], "en")
+        first = self.session.add_orders([("lemon_pasta", 900)] * 2)
+        second = self.session.add_orders([("lemon_pasta", 900)])
+        self.room.remember_orders("table.hall.3", [o.id for o in second])
+        self.room.remember_orders("table.hall.1", [o.id for o in first])
+        self.now = 1000
+        picked = []
+        for _ in range(3):
+            self.room.sync()
+            task = self.room.waiters["waiter_a"]["task"]
+            picked.append((task["table_id"], task["order_id"]))
+            self.room.arrive("waiter_a", task["id"])
+            self.room.arrive("waiter_a", self.room.waiters["waiter_a"]["task"]["id"])
+        self.assertEqual(picked, [("table.hall.1", first[0].id), ("table.hall.1", first[1].id),
+                                  ("table.hall.3", second[0].id)])
+
     def test_snapshot_is_detached_and_sessions_are_isolated(self):
         state = self.room.seat("seat.hall.1.a")
         state["tables"][0]["order_ids"].append("fake")

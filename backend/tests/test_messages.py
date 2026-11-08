@@ -95,6 +95,22 @@ class MessageApiTests(unittest.TestCase):
         self.assertEqual(body["recipes"]["lemon_pasta"]["id"], "lemon_pasta")
 
 
+class FallbackReplyTests(unittest.TestCase):
+    def test_only_en_switches_the_fallback_to_english(self):
+        from pasta_chef.agents.host import fallback_reply
+        accepted = [dict(type="order_accepted")]
+        other = [dict(type="something_else")]
+        for language in (None, "ko", "fr"):
+            with self.subTest(language=language):
+                self.assertEqual(fallback_reply(accepted, language), "주문 받았어요. 바로 준비할게요!")
+                self.assertEqual(fallback_reply(other, language), FALLBACK_REPLY)
+                self.assertEqual(fallback_reply([], language),
+                                 "죄송해요, 지금은 답변을 드리기 어려워요. 잠시 후 다시 말씀해 주세요.")
+        self.assertEqual(fallback_reply([]), FALLBACK_REPLY)
+        self.assertEqual(fallback_reply(accepted, "en"), "Your order is confirmed. We'll start preparing it now!")
+        self.assertEqual(fallback_reply(other, "en"), "Sorry, I cannot reply right now. Please try again shortly.")
+
+
 class HostEvaluationCaseTests(unittest.TestCase):
     def test_cases_are_well_formed(self):
         cases = json.loads((ROOT / "evaluation" / "host_cases.json").read_text(encoding="utf-8"))

@@ -7,6 +7,21 @@ from copy import deepcopy
 import re
 
 WAITER_IDS = ("waiter_a", "waiter_b")
+TABLE_COUNTS = {"hall": 10, "terrace": 6}
+SEAT_LETTERS = "abcd"
+PLATES_PER_TABLE = len(SEAT_LETTERS)  # One plate per physical seat.
+
+# Only an explicit "ko" gets Korean; None or anything else falls back to English.
+NOTICES = {
+    "ko": dict(greet="어서 오세요! 메뉴를 천천히 보세요. 준비되시면 주문을 도와드릴게요.",
+               deliver="맛있게 드세요! 더 필요한 게 있으면 불러 주세요."),
+    "en": dict(greet="Welcome! Take your time with the menu. I'll help when you're ready to order.",
+               deliver="Enjoy your meal! Call me if you need anything else."),
+}
+
+
+def _notice_text(kind, language):
+    return NOTICES["ko" if language == "ko" else "en"][kind]
 
 
 class RestaurantRuntime:
@@ -21,7 +36,7 @@ class RestaurantRuntime:
 
     def seat(self, seat_id):
         match = re.fullmatch(r"seat\.(hall|terrace)\.([1-9][0-9]?)\.([a-d])", seat_id)
-        if not match or int(match[2]) > (10 if match[1] == "hall" else 6):
+        if not match or int(match[2]) > TABLE_COUNTS[match[1]]:
             raise ValueError("Unknown restaurant seat.")
         table_id = f"table.{match[1]}.{match[2]}"
         self.leave()
@@ -71,18 +86,12 @@ class RestaurantRuntime:
 
     def sync(self):
         self.session.sync()
-        orders = self.session.live.kitchen.state.orders
         reserved = {w["task"]["order_id"] for w in self.waiters.values() if w["task"]}
         for name, waiter in self.waiters.items():
             if waiter["task"]:
                 continue
             assigned = [t for t in self.tables.values() if t["waiter_id"] == name]
-            # One plate per physical seat; full tables leave additional plates at the pass.
-            ready = next(((t, order_id) for t in assigned
-                          if sum(d["table_id"] == t["id"] for d in self.delivered.values()) < 4
-                          for order_id in t["order_ids"]
-                          if order_id not in self.delivered and order_id not in reserved
-                          and orders[order_id].status == "served"), None)
+            ready = self._next_pickup(name, reserved)
             if ready:
                 table, order_id = ready
                 waiter["task"] = self._task("pickup", table["id"], order_id)
@@ -91,6 +100,23 @@ class RestaurantRuntime:
             table = next((t for t in assigned if t["seated"] and not t["greeted"]), None)
             if table:
                 waiter["task"] = self._task("greet", table["id"])
+
+    def _next_pickup(self, waiter_name, reserved):
+        """First (table, order_id) this waiter can carry, in table then order sequence.
+
+        Full tables leave additional plates at the pass.
+        """
+        orders = self.session.live.kitchen.state.orders
+        for table in self.tables.values():
+            if table["waiter_id"] != waiter_name:
+                continue
+            if sum(d["table_id"] == table["id"] for d in self.delivered.values()) >= PLATES_PER_TABLE:
+                continue
+            for order_id in table["order_ids"]:
+                if (order_id not in self.delivered and order_id not in reserved
+                        and orders[order_id].status == "served"):
+                    return table, order_id
+        return None
 
     def arrive(self, waiter_id, task_id, language="ko"):
         self.sync()
@@ -112,17 +138,17 @@ class RestaurantRuntime:
                 raise ValueError("This dish cannot be delivered twice.")
             used = {d["seat_id"] for d in self.delivered.values() if d["table_id"] == table["id"]}
             prefix = table["seat_id"].rsplit(".", 1)[0]
-            seat = next((s for s in [table["seat_id"], *[f"{prefix}.{letter}" for letter in "abcd"]]
+            seat = next((s for s in [table["seat_id"], *[f"{prefix}.{letter}" for letter in SEAT_LETTERS]]
                          if s not in used), None)
             if seat is None:
                 raise ValueError("The table has no free plate space.")
             self.delivered[order_id] = dict(table_id=table["id"], seat_id=seat, waiter_id=waiter_id)
             waiter.update(task=None, carrying=None)
-            notice = "맛있게 드세요! 더 필요한 게 있으면 불러 주세요." if language == "ko" else "Enjoy your meal! Call me if you need anything else."
+            notice = _notice_text("deliver", language)
         else:
             table["greeted"] = True
             waiter["task"] = None
-            notice = "어서 오세요! 메뉴를 천천히 보세요. 준비되시면 주문을 도와드릴게요." if language == "ko" else "Welcome! Take your time with the menu. I'll help when you're ready to order."
+            notice = _notice_text("greet", language)
         self.sync()
         return dict(restaurant=self.snapshot(), notice=dict(speaker=waiter_id, text=notice,
                     table_id=table["id"], kind=task["kind"]) if notice else None)
