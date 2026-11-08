@@ -1,6 +1,9 @@
 """Read-only kitchen specialist, called by waiters as an SDK agent tool."""
 from copy import deepcopy
 
+from pasta_chef.agents.orders import DEFAULT_TIME_LIMIT
+from pasta_chef.runtime.sessions import rehearse_until
+
 
 class KitchenAdvisor:
     def __init__(self, team):
@@ -52,13 +55,9 @@ class KitchenAdvisor:
         estimates = {}
         for menu in self.team.menus:
             rehearsal = deepcopy(live)
-            order = rehearsal.add_orders(now, [(menu, 900)])[0]
-            horizon = now
-            while order.served_at is None:
-                horizon += 3600
-                if horizon - now > 10 ** 7:
-                    raise RuntimeError("Kitchen estimate did not finish.")
-                rehearsal.advance_to(horizon)
+            order = rehearsal.add_orders(now, [(menu, DEFAULT_TIME_LIMIT)])[0]
+            rehearse_until(rehearsal, lambda: order.served_at is not None,
+                           error=f"Kitchen estimate for menu {menu} did not finish.")
             estimates[menu] = dict(ready_in_seconds=max(0, order.served_at - now))
         return dict(time=now, quantity=1, units="simulated_seconds",
                     assumptions="One additional plate per independent estimate; no future arrivals; table delivery excluded.",
