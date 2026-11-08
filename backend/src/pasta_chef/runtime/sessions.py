@@ -29,6 +29,30 @@ def decide_small_talk(turns_used, *, handed_off, would_make_late, helper_free):
     return "hand_off" if helper_free and not handed_off else "end"
 
 
+# Rehearsals run a copied kitchen forward to see the future. Simulated seconds.
+REHEARSAL_STEP_SECONDS = 3600
+REHEARSAL_LIMIT_SECONDS = 10 ** 7
+
+
+def rehearse_until(rehearsal, finished, *, error="Orders would not finish."):
+    """Advance `rehearsal` (a copied LiveKitchen) one step at a time until finished() is True.
+
+    rehearsal: a LiveKitchen copy. Its .now is the start; .advance_to(t) moves it to t.
+    finished:  a function with no arguments returning True when the rehearsal can stop.
+               It is checked BEFORE every step, so an already-finished rehearsal never moves.
+    error:     message of the RuntimeError raised when the next step would pass the limit.
+
+    Steps go to start + 3600, start + 7200, ... and never beyond start + REHEARSAL_LIMIT_SECONDS.
+    Returns None; read results from the rehearsal itself afterwards.
+    """
+    start = horizon = rehearsal.now
+    while not finished():
+        horizon += REHEARSAL_STEP_SECONDS
+        if horizon - start > REHEARSAL_LIMIT_SECONDS:  # Check before moving: never pass the limit.
+            raise RuntimeError(error)
+        rehearsal.advance_to(horizon)
+
+
 class LiveKitchen:
     """Dispatch up to a given simulated time. Knows nothing about real time."""
 
@@ -192,12 +216,8 @@ class LiveSession:
         now = self.sync()
         rehearsal = deepcopy(self.live)
         state = rehearsal.kitchen.state
-        horizon = now
-        while any(state.orders[order_id].served_at is None for order_id in order_ids):
-            horizon += 3600
-            if horizon - now > 10 ** 7:
-                raise RuntimeError("Orders would not finish.")
-            rehearsal.advance_to(horizon)
+        # Stop when THESE orders are served; others may still be cooking.
+        rehearse_until(rehearsal, lambda: all(state.orders[i].served_at is not None for i in order_ids))
         return max(state.orders[order_id].served_at for order_id in order_ids) - now
 
     def _served_times(self, seconds=None):
@@ -205,14 +225,10 @@ class LiveSession:
         now = self.sync()
         rehearsal = deepcopy(self.live)
         if seconds is not None:
-            rehearsal.hold_chef(now, seconds)
+            rehearsal.hold_chef(now, seconds)  # `seconds` is how long a chef is held, not a time offset.
         state = rehearsal.kitchen.state
-        horizon = now
-        while any(order.served_at is None for order in state.orders.values()):
-            horizon += 3600
-            if horizon - now > 10 ** 7:
-                raise RuntimeError("Orders would not finish.")
-            rehearsal.advance_to(horizon)
+        # Stop when EVERY order is served.
+        rehearse_until(rehearsal, lambda: all(order.served_at is not None for order in state.orders.values()))
         return {order.id: (order.served_at, order.deadline) for order in state.orders.values()}
 
     def _hold_would_make_late(self, seconds):
