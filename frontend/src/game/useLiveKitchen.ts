@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { gameText, type Language } from './language';
-import { liveReplay, mergeEvents, simulatedNow, visibleActions, type ChatEntry, type HostReply, type LiveSessionInfo, type StaffProgress } from '../live';
+import { liveReplay, mergeEvents, simulatedNow, type ChatEntry, type HostReply, type LiveSessionInfo, type StaffProgress } from '../live';
 import { replayAt, type ReplayEvent } from '../replay';
 import { kitchenFrame } from '../scene/replayPresentation';
 
@@ -36,7 +36,6 @@ export function useLiveKitchen(chefCount: number, language: Language = 'ko', exp
   const [awaitingWaiter, setAwaitingWaiter] = useState(false);
   const startedAt = useRef(0);
   const eventsRef = useRef<ReplayEvent[]>([]);
-  const speaker = useRef('chef');
   const speechId = useRef(0);
 
   useEffect(() => {
@@ -114,7 +113,6 @@ export function useLiveKitchen(chefCount: number, language: Language = 'ko', exp
       const created = await post<LiveSessionInfo>('/sessions', { speed, chefs: chefCount, equipment: expandedKitchen ? 'expanded' : 'standard' });
       startedAt.current = performance.now();
       eventsRef.current = [];
-      speaker.current = 'chef';
       turnVersion.current += 1; replyInFlight.current = false; setStaffProgress(null);
       queuedAnswer.current = null; setAwaitingWaiter(false);
       setEvents([]); setEntries([]); setNow(0); setSpeech(null);
@@ -137,13 +135,10 @@ export function useLiveKitchen(chefCount: number, language: Language = 'ko', exp
   }
 
   function publishAnswer(answer: HostReply) {
-    const handedOff = answer.actions.some((action) => action.type === 'small_talk' && action.decision === 'hand_off');
-    const who = handedOff ? speaker.current : answer.speaker;
-    speaker.current = answer.speaker;
     setEntries((current) => [...current,
-      { kind: 'host', text: answer.reply, failed: answer.failed, speaker: who },
-      ...visibleActions(answer.actions).map((action) => ({ kind: 'action' as const, action }))]);
-    say(who, answer.reply);
+      { kind: 'host', text: answer.reply, failed: answer.failed, speaker: answer.speaker },
+      ...answer.actions.map((action) => ({ kind: 'action' as const, action }))]);
+    say(answer.speaker, answer.reply);
   }
 
   function finishConsultation(turn: number) {

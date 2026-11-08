@@ -31,11 +31,10 @@ test('switching card language preserves the accepted dish, quantity and kitchen 
   assert.match(card('ko'), /레몬 파스타/);
 });
 
-test('English chat cards distinguish rejection and conversation hand-off from accepted orders', () => {
+test('English chat cards distinguish rejection from accepted orders', () => {
   const rejected = describeAction({ type: 'order_rejected', menu: 'unknown', reason: 'unsupported_menu' }, (id) => id, 'en');
   assert.match(rejected, /not on the menu/);
   assert.doesNotMatch(rejected, /accepted/);
-  assert.match(describeAction({ type: 'small_talk', decision: 'hand_off', chef: 'chef_2' }, (id) => id, 'en'), /Chef 2.*taken over/);
 });
 
 test('fig pasta keeps its name, ingredients and asset at each presentation point', () => {

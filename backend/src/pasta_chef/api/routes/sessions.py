@@ -7,6 +7,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field, StrictInt, StrictStr, field_validator
 
 from pasta_chef.agents.host import MessageLimitReached, available_menus, create_host, fallback_reply
+from pasta_chef.agents.orders import MAX_QUANTITY
 from pasta_chef.api.errors import error_responses, safe_text
 from pasta_chef.config import ConfigurationError
 from pasta_chef.api.schemas import ChefCount, OrderCreate, OrderResponse, RunningTaskResponse
@@ -53,13 +54,11 @@ class MessageCreate(BaseModel):
 
 class HostAction(BaseModel):
     """What actually happened, reported by code rather than by the model."""
-    type: Literal["order_accepted", "order_rejected", "small_talk", "manager_called", "waiter_reassigned", "kitchen_consulted"]
+    type: Literal["order_accepted", "order_rejected", "manager_called", "waiter_reassigned", "kitchen_consulted"]
     table_id: str | None = None
     waiter_id: str | None = None
     menu: str | None = None
     quantity: int | None = None
-    decision: Literal["chat", "hand_off", "end"] | None = None
-    chef: str | None = None
     order_ids: list[str] = []
     ready_in_seconds: int | None = None
     reason: str | None = None
@@ -86,7 +85,7 @@ class MessageReply(BaseModel):
 
 class SessionOrderCreate(OrderCreate):
     model_config = ConfigDict(extra="forbid")
-    quantity: Annotated[StrictInt, Field(ge=1, le=20)] = 1
+    quantity: Annotated[StrictInt, Field(ge=1, le=MAX_QUANTITY)] = 1
 
 
 class SessionOrdersCreated(BaseModel):

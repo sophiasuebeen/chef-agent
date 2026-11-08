@@ -2,7 +2,6 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { BAR_SECONDS, barScore, CLAVE, PROGRESSION } from '../src/game/bossaNova.ts';
 import { blocked, clampCamera, MENU_BOARD, moveVector, OBSTACLES, SPAWN, step, zoneAt } from '../src/game/movement.ts';
-import { describeAction, visibleActions } from '../src/live.ts';
 import { replayAt } from '../src/replay.ts';
 import { kitchenFrame } from '../src/scene/replayPresentation.ts';
 
@@ -121,11 +120,3 @@ test('a chef held for a customer comes to the counter to talk, and nobody else d
   assert.deepEqual(held('chef_2').resources, replayAt(replay, 100).resources);
 });
 
-test('conversation cards: chat stays quiet, hand-off and ending are stated', () => {
-  const chat = { type: 'small_talk', decision: 'chat', chef: 'chef' };
-  const off = { type: 'small_talk', decision: 'hand_off', chef: 'chef_2' };
-  const end = { type: 'small_talk', decision: 'end', chef: 'chef' };
-  assert.deepEqual(visibleActions([chat, off, end]), [off, end]);
-  assert.match(describeAction(off, (m) => m), /셰프 2/);
-  assert.match(describeAction(end, (m) => m), /바빠/);
-});
