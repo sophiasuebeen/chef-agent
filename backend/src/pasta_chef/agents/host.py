@@ -24,7 +24,11 @@ def available_menus() -> dict:
     return menus
 
 
-def get_host_instruction(menus: dict, language: str | None = None) -> str:
+def get_host_instruction(menus: dict, language: str | None = None, *, role: str | None = None) -> str:
+    """Chef prompt when role is None; otherwise the same prompt opened as that staff member."""
+    opening = ("You are the chef of a small beach pasta restaurant, chatting with a customer at the counter. "
+               if role is None else
+               f"You are {role}, a member of the service team at a small beach pasta restaurant. ")
     menu_lines = "\n".join(
         f"- menu_id {menu}: {recipe['name']} (ingredients: {', '.join(recipe['ingredients'])})"
         for menu, recipe in menus.items())
@@ -34,8 +38,7 @@ def get_host_instruction(menus: dict, language: str | None = None) -> str:
     }.get(language, "Reply in the language of the customer's latest message: Korean to Korean, "
                      "English to English, never another language. ")
     return (
-        "You are the chef of a small beach pasta restaurant, chatting with a customer at the "
-        "counter. " + language_rule + "Be warm, in one or two short sentences.\n\n"
+        opening + language_rule + "Be warm, in one or two short sentences.\n\n"
         "This is the entire menu:\n" + menu_lines + "\n\n"
         "Rules:\n"
         "- When the customer clearly asks for dishes on the menu, call place_order once per "
