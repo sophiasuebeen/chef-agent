@@ -74,9 +74,7 @@ class RestaurantTeam(OrderDesk):
         return result
 
     def _staff_instruction(self, context, agent):
-        base = get_host_instruction(self.menus, self._language).replace(
-            "You are the chef of a small beach pasta restaurant, chatting with a customer at the counter.",
-            f"You are {agent.name}, a member of the service team at a small beach pasta restaurant.")
+        base = get_host_instruction(self.menus, self._language, role=agent.name)
         table = self.restaurant.tables.get(self._table_id)
         location = (f"This customer's table is {self._table_id}, with assigned waiter {table['waiter_id']}."
                     if table else "This customer is at the counter, without a table.")
