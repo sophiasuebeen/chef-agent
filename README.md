@@ -82,7 +82,7 @@ An order exists only after `place_order` passes simulator validation. Cooking an
 - **Limits:** each customer turn gets 6 SDK turns, 30 seconds, and one 4-turn advisor run.
 - **Failure:** if the advisor fails, the waiter is told not to claim a confirmed answer, and accepted orders remain.
 
-Tested offline with the real Agents SDK `Runner` and a scripted model.
+Tested offline with the real OpenAI Agents SDK `Runner` and a scripted model.
 
 ### Resource-constrained cooking
 
@@ -103,6 +103,7 @@ Higher scores run first, favoring earlier deadlines and less remaining work. Dur
 | UI state | React hooks, Zustand | Player interaction, scene settings, and client presentation state |
 | Backend | Python 3.12+, FastAPI, Pydantic, Uvicorn | Validated HTTP endpoints, live sessions, and event streaming |
 | AI staff | OpenAI Agents SDK, OpenAI models | Waiter conversations, kitchen consultation tools, and manager handoffs |
+| Offline rule evolution (optional) | Google GenAI SDK, Gemini | LLM-proposed priority rules, evaluated offline and never used during service |
 | Simulation | Python recipe/task models and priority dispatcher | Task dependencies, equipment ownership, simulated time, and deadlines |
 | Development and verification | uv, npm, Python unittest, Node.js test runner, TypeScript | Dependency management, offline checks, and builds |
 

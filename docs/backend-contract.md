@@ -1,7 +1,7 @@
 # Backend contract (v1)
 
 This is the stable simulator contract for implementation and independent tests.
-No ADK installation, credentials, wall-clock waits, or network is required.
+No agent SDK installation, credentials, wall-clock waits, or network is required.
 Import `Kitchen` from `pasta_chef.simulation.kitchen` and `build_observation`
 from `pasta_chef.simulation.observation`. All times are integer simulated seconds.
 
@@ -103,8 +103,7 @@ completion batch normally and stop there. Thus `until` is an upper bound for
 this call, not a request to process every event through that timestamp.
 
 The priority scheduler uses this boundary for exact-time arrivals and episode
-limits. Calling without arguments retains the original behavior. ADK's tool
-wrapper still exposes the no-argument operation.
+limits. Calling without arguments retains the original behavior.
 
 ### Kitchen.serve_order(order_id: str) -> dict
 

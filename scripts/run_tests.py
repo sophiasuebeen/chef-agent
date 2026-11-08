@@ -18,7 +18,7 @@ import warnings
 
 ROOT = Path(__file__).resolve().parent.parent
 SUITES = {
-    "tests": "Simulator, host models and evaluation",
+    "tests": "Simulator, configuration and evaluation",
     "backend/tests": "API",
 }
 USE_COLOR = sys.stdout.isatty() and "NO_COLOR" not in os.environ
@@ -32,7 +32,7 @@ PASS, FAIL, SKIP = paint("✓", "32"), paint("✗", "31"), paint("-", "33")
 
 
 def group_title(test) -> str:
-    """MockedAdkWorkflowTests -> Mocked Adk Workflow."""
+    """MessageApiTests -> Message Api."""
     name = type(test).__name__
     if name == "_FailedTest":
         return "Could not load"
