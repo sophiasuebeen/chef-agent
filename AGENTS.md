@@ -17,6 +17,18 @@ An optimizer-style scheduler cooks; the LLM handles only customer conversation. 
 - Preserve established names, interfaces, and structure unless a change is necessary; explain migrations and update callers together.
 - Do not add dependencies, cloud infrastructure, databases, or extra agents merely to make the project appear sophisticated.
 
+### Habits that keep debt from coming back
+
+These came from a 2026 refactoring pass that removed duplicated loops, dead legacy paths and an upward import.
+
+- Before writing a helper, grep for one that already exists (`grep -rn "<distinctive line>" backend/src`). Reuse or extract it; do not paste a second copy.
+- When a change replaces a path, delete the old code, its tests and its docs in the same PR. Before deleting or moving a name, grep for every caller and update them together.
+- Never build behavior by `str.replace()` on text owned by another module (prompts, messages). Pass a parameter instead; a silent no-op replace is a bug.
+- Do not read another class's `_private` attributes. Add a small public property, method or hook.
+- Name repeated literals (limits, timeouts, counts) once, in the lowest layer that needs them.
+- Keep refactors and behavior changes in separate PRs. If a refactor must change behavior, say so in the PR.
+- Parallel sessions or agents each get their own git worktree and their own set of files.
+
 ## Current implementation
 
 The simulator implements order intake, task validation/start, event-based time
