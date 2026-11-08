@@ -10,7 +10,7 @@ export interface LiveSessionInfo {
 }
 
 export interface HostAction {
-  type: 'order_accepted' | 'order_rejected' | 'small_talk' | 'manager_called' | 'waiter_reassigned' | 'kitchen_consulted';
+  type: 'order_accepted' | 'order_rejected' | 'manager_called' | 'waiter_reassigned' | 'kitchen_consulted';
   table_id?: string | null;
   waiter_id?: string | null;
   menu: string | null;
@@ -18,8 +18,6 @@ export interface HostAction {
   order_ids: string[];
   ready_in_seconds: number | null;
   reason: string | null;
-  decision: 'chat' | 'hand_off' | 'end' | null;
-  chef: string | null;
 }
 
 export interface HostReply {
@@ -80,10 +78,6 @@ export function simulatedNow(startedAtMs: number, nowMs: number, speed: number, 
   return Math.max(fromClock, events.at(-1)?.time ?? 0);
 }
 
-/** Ordinary chat needs no card: the conversation itself shows it. */
-export const visibleActions = (actions: HostAction[]) =>
-  actions.filter((action) => action.type !== 'small_talk' || action.decision !== 'chat');
-
 /** Words for what code recorded, so a card never depends on what the model said. */
 export function describeAction(action: HostAction, menuName: (menu: string) => string, language: Language = 'ko'): string {
   if (action.type === 'kitchen_consulted') return language === 'ko' ? '담당 웨이터가 주방에 확인했어요' : 'Your waiter checked with the kitchen';
@@ -92,9 +86,6 @@ export function describeAction(action: HostAction, menuName: (menu: string) => s
     ? `${chefLabel(action.waiter_id ?? 'waiter_a', language)}가 테이블을 담당해요`
     : `${chefLabel(action.waiter_id ?? 'waiter_a', language)} is now looking after your table`;
   if (language === 'en') {
-    if (action.type === 'small_talk') return action.decision === 'hand_off'
-      ? `${chefLabel(action.chef ?? 'chef', language)} has taken over the conversation`
-      : action.decision === 'end' ? 'The kitchen is busy; the chef has returned to cooking' : '';
     const dish = menuName(action.menu ?? '');
     if (action.type === 'order_accepted') {
       const minutes = Math.max(1, Math.round((action.ready_in_seconds ?? 0) / 60));
@@ -103,10 +94,6 @@ export function describeAction(action: HostAction, menuName: (menu: string) => s
     if (action.reason === 'unsupported_menu') return `Cannot order: ${dish} is not on the menu`;
     if (action.reason === 'invalid_quantity') return `Cannot order: choose 1–20 plates at a time (${dish})`;
     return `Cannot order: ${dish}`;
-  }
-  if (action.type === 'small_talk') {
-    return action.decision === 'hand_off' ? `쉬고 있던 ${chefLabel(action.chef ?? 'chef')}가 대화를 이어받았어요`
-      : action.decision === 'end' ? '주방이 바빠 셰프가 조리로 돌아갔어요' : '';
   }
   const dish = menuName(action.menu ?? '');
   if (action.type === 'order_accepted') {

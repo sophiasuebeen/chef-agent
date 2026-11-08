@@ -16,19 +16,6 @@ from pasta_chef.simulation.kitchen import Kitchen, chef_names, free_chef
 from pasta_chef.simulation.recipes import load_recipe
 from pasta_chef.simulation.scheduler import Dispatcher
 
-# Small talk costs a chef's time, so it is budgeted. Simulated seconds, except the turn count.
-SMALL_TALK_TURNS = 3
-SMALL_TALK_SECONDS = 30
-SMALL_TALK_RESET_SECONDS = 300
-
-
-def decide_small_talk(turns_used, *, handed_off, would_make_late, helper_free):
-    """chat, hand_off to a chef on a break, or end. This is the rule for a pestering customer."""
-    if turns_used < SMALL_TALK_TURNS and not would_make_late:
-        return "chat"
-    return "hand_off" if helper_free and not handed_off else "end"
-
-
 # Rehearsals run a copied kitchen forward to see the future. Simulated seconds.
 REHEARSAL_STEP_SECONDS = 3600
 REHEARSAL_LIMIT_SECONDS = 10 ** 7
@@ -195,10 +182,6 @@ class LiveSession:
         self._started_at = clock()
         self.host = None
         self.host_busy = False
-        self.talking_chef = None
-        self._small_talk_turns = 0
-        self._handed_off = False
-        self._last_small_talk = None
         from pasta_chef.runtime.restaurant import RestaurantRuntime
         self.restaurant = RestaurantRuntime(self)
 
@@ -219,43 +202,6 @@ class LiveSession:
         # Stop when THESE orders are served; others may still be cooking.
         rehearse_until(rehearsal, lambda: all(state.orders[i].served_at is not None for i in order_ids))
         return max(state.orders[order_id].served_at for order_id in order_ids) - now
-
-    def _served_times(self, seconds=None):
-        """When each order would be served, on a copy, optionally after holding a chef."""
-        now = self.sync()
-        rehearsal = deepcopy(self.live)
-        if seconds is not None:
-            rehearsal.hold_chef(now, seconds)  # `seconds` is how long a chef is held, not a time offset.
-        state = rehearsal.kitchen.state
-        # Stop when EVERY order is served.
-        rehearse_until(rehearsal, lambda: all(order.served_at is not None for order in state.orders.values()))
-        return {order.id: (order.served_at, order.deadline) for order in state.orders.values()}
-
-    def _hold_would_make_late(self, seconds):
-        """True if holding would push an order that is otherwise on time past its deadline."""
-        without, held = self._served_times(), self._served_times(seconds)
-        return any(without[order][0] <= without[order][1] < held[order][0] for order in without)
-
-    def small_talk(self):
-        """Spend the conversation budget on one turn. Returns the decision and who is talking."""
-        now = self.sync()
-        if self._last_small_talk is not None and now - self._last_small_talk >= SMALL_TALK_RESET_SECONDS:
-            self._small_talk_turns, self._handed_off = 0, False
-        self._last_small_talk = now
-        decision = decide_small_talk(
-            self._small_talk_turns, handed_off=self._handed_off,
-            would_make_late=self._hold_would_make_late(SMALL_TALK_SECONDS),
-            helper_free=self.live.free_helper(self.talking_chef) is not None)
-        if decision == "chat":
-            self._small_talk_turns += 1
-            self.live.hold_chef(now, SMALL_TALK_SECONDS)
-            self.talking_chef = self.live.held_chef or self.talking_chef or "chef"
-        elif decision == "hand_off":
-            self.talking_chef = self.live.transfer_hold(now, SMALL_TALK_SECONDS, excluding=self.talking_chef)
-            self._handed_off, self._small_talk_turns = True, 1
-        else:
-            self.live.release_chef(now)
-        return dict(decision=decision, chef=self.talking_chef or "chef")
 
     def hold_chef(self, seconds):
         self.live.hold_chef(self.sync(), seconds)
