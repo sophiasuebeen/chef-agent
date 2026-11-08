@@ -88,6 +88,15 @@ class OrderDeskTests(unittest.TestCase):
         self.assertEqual(len(self.kitchen_orders()), 2)
         self.assertEqual(len(self.desk._actions), 1)
 
+    def test_on_accepted_runs_once_per_new_order_and_never_for_repeats_or_rejections(self):
+        seen = []
+        self.desk._on_accepted = seen.append
+        first = self.desk.place_order("lemon_pasta", 2)
+        self.desk.place_order("lemon_pasta", 2)
+        self.desk.place_order("lemon_pasta", 0)
+        self.desk.place_order("pizza", 1)
+        self.assertEqual(seen, [first["order_ids"]])
+
     def test_several_dishes_in_one_turn_are_ordered_separately(self):
         self.desk.place_order("lemon_pasta", 1)
         self.desk.place_order("fig_pasta", 1)

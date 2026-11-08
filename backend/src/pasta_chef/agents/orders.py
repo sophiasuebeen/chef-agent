@@ -45,7 +45,8 @@ class OrderDesk:
         Accepted  -> {"ok": True, "order_ids": [...], "ready_in_seconds": int, "reminder": ACCEPTED_REMINDER}
                      and append {"type": "order_accepted", "menu", "quantity", "order_ids", "ready_in_seconds"}.
         Rejected  -> see _reject. Nothing reaches the kitchen.
-        Repeated  -> the same (menu_id, quantity) in one turn returns the first result again.
+        Repeated  -> the same (menu_id, quantity) in one turn returns the first result again,
+                     without calling _on_accepted a second time.
         """
         # 1) Validate first. Each rejection returns early, before the kitchen is touched.
         key = (menu_id, quantity)
@@ -68,7 +69,11 @@ class OrderDesk:
                                   order_ids=order_ids, ready_in_seconds=ready))
         result = dict(ok=True, order_ids=order_ids, ready_in_seconds=ready, reminder=ACCEPTED_REMINDER)
         self._placed_this_turn[key] = result
+        self._on_accepted(order_ids)
         return result
+
+    def _on_accepted(self, order_ids: list) -> None:
+        """Hook for subclasses, called once per newly accepted order call (never for repeats)."""
 
     def _reject(self, menu_id, quantity, reason: str, **details) -> dict:
         """Record a refusal and return {"ok": False, "reason": reason, **details}.

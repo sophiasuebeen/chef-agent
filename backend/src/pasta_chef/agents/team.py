@@ -36,15 +36,21 @@ class RestaurantTeam(OrderDesk):
     def _kitchen_progress(self, phase):
         self.progress = dict(turn=self.messages, phase=phase, speaker=self._turn_waiter)
 
-    def place_order(self, menu_id: str, quantity: int) -> dict:
-        key = (menu_id, quantity)
-        repeated = key in self._placed_this_turn
-        result = super().place_order(menu_id, quantity)
-        if result["ok"] and not repeated:
-            self.restaurant.remember_orders(self._table_id, result["order_ids"])
-            if self._table_id is None:
-                self._counter_orders.extend(result["order_ids"])
-        return result
+    @property
+    def model(self):
+        """The model (name or SDK Model) every staff agent and the kitchen advisor use."""
+        return self._model
+
+    @property
+    def language(self):
+        """The customer language of the current turn ("ko", "en" or None)."""
+        return self._language
+
+    def _on_accepted(self, order_ids: list) -> None:
+        # OrderDesk calls this only for new accepted orders, so repeats are never re-remembered.
+        self.restaurant.remember_orders(self._table_id, order_ids)
+        if self._table_id is None:
+            self._counter_orders.extend(order_ids)
 
     def get_order_status(self) -> dict:
         """Read only orders belonging to this table (or this counter conversation)."""
@@ -52,9 +58,16 @@ class RestaurantTeam(OrderDesk):
             self._counter_orders)
         orders = [o for o in self.session.snapshot()["orders"] if o["id"] in ids]
         pending = [o["id"] for o in orders if o["status"] != "served"]
-        return dict(orders=[dict(id=o["id"], menu=o["menu"], status=("delivered" if o["id"] in
-                    self.restaurant.delivered else "ready_at_pass" if o["status"] == "served" else o["status"]))
-                    for o in orders], all_ready_in_seconds=self.session.ready_in_seconds(pending) if pending else 0)
+        return dict(orders=[dict(id=o["id"], menu=o["menu"], status=self._dining_status(o)) for o in orders],
+                    all_ready_in_seconds=self.session.ready_in_seconds(pending) if pending else 0)
+
+    def _dining_status(self, order: dict) -> str:
+        """Kitchen status refined by the dining room: delivered > ready_at_pass > kitchen status."""
+        if order["id"] in self.restaurant.delivered:
+            return "delivered"
+        if order["status"] == "served":  # Kitchen "served" means plated at the pass, not at the table.
+            return "ready_at_pass"
+        return order["status"]
 
     def get_service_status(self) -> dict:
         """Inspect actual staff assignments and this table's order status."""
@@ -74,7 +87,7 @@ class RestaurantTeam(OrderDesk):
         return result
 
     def _staff_instruction(self, context, agent):
-        base = get_host_instruction(self.menus, self._language, role=agent.name)
+        base = get_host_instruction(self.menus, self.language, role=agent.name)
         table = self.restaurant.tables.get(self._table_id)
         location = (f"This customer's table is {self._table_id}, with assigned waiter {table['waiter_id']}."
                     if table else "This customer is at the counter, without a table.")
@@ -108,7 +121,7 @@ class RestaurantTeam(OrderDesk):
         from agents import Agent, function_tool, handoff, ModelSettings, RunConfig
         from pasta_chef.agents.kitchen_advisor import KitchenAdvisor
         order_tools = [function_tool(self.place_order), function_tool(self.get_order_status)]
-        self.manager = Agent(name="ManagerAgent", model=self._model, instructions=self._staff_instruction,
+        self.manager = Agent(name="ManagerAgent", model=self.model, instructions=self._staff_instruction,
                              handoff_description="Handles complaints, service exceptions and manager requests.",
                              tools=[*order_tools, function_tool(self.get_service_status),
                                     function_tool(self.reassign_waiter)])
@@ -147,7 +160,7 @@ class RestaurantTeam(OrderDesk):
             return await self._advice_task
 
         consult.on_invoke_tool = consult_once
-        self.waiters = {name: Agent(name=f"WaiterAgent_{name[-1].upper()}", model=self._model,
+        self.waiters = {name: Agent(name=f"WaiterAgent_{name[-1].upper()}", model=self.model,
                                    instructions=self._staff_instruction, tools=[*order_tools, consult],
                                    model_settings=ModelSettings(parallel_tool_calls=False),
                                    handoffs=[manager_handoff]) for name in ("waiter_a", "waiter_b")}
@@ -198,13 +211,27 @@ class RestaurantTeam(OrderDesk):
                     failed=failed or not reply, speaker=speaker, progress=self.progress)
 
 
+# The staff team runs on the OpenAI Agents SDK, so it needs an OpenAI model. CHEF_MODEL (and the
+# Settings default "gemini-2.5-flash") also serve Gemini tooling such as rule evolution, so a
+# non-OpenAI name there is expected and deliberately replaced by this fallback for the staff.
+STAFF_FALLBACK_MODEL = "gpt-4o"
+OPENAI_MODEL_PREFIXES = ("gpt-", "o1", "o3", "o4")
+
+
+def staff_model_name(configured: str) -> str:
+    """Map a configured model name to the OpenAI model the staff team uses.
+
+    "openai/gpt-4o-mini" -> "gpt-4o-mini"; "o3-mini" -> "o3-mini";
+    "gemini-2.5-flash" (or any non-OpenAI name) -> STAFF_FALLBACK_MODEL.
+    """
+    if configured.startswith("openai/"):
+        configured = configured[len("openai/"):]
+    return configured if configured.startswith(OPENAI_MODEL_PREFIXES) else STAFF_FALLBACK_MODEL
+
+
 def create_team(session):
     from pasta_chef.config import Settings, require_model_credentials
     settings = Settings.from_env()
-    model = os.getenv("RESTAURANT_MODEL") or os.getenv("CHEF_HOST_MODEL") or settings.model
-    if model.startswith("openai/"):
-        model = model[len("openai/"):]
-    if not model.startswith(("gpt-", "o1", "o3", "o4")):
-        model = "gpt-4o"
+    model = staff_model_name(os.getenv("RESTAURANT_MODEL") or os.getenv("CHEF_HOST_MODEL") or settings.model)
     require_model_credentials("openai/" + model)
     return RestaurantTeam(session, model)
